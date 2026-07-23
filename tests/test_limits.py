@@ -1,0 +1,61 @@
+from dataclasses import replace
+import httpx
+
+from app.limits import ConcurrencyLimiter
+from app.main import create_app
+from conftest import FakeWorker
+
+
+async def post(app, body):
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        return await client.post("/v1/generate", json=body)
+
+
+async def test_empty_prompt_rejected(settings):
+    response = await post(create_app(settings, FakeWorker()), {"prompt": " "})
+    assert response.status_code == 400
+
+
+async def test_prompt_too_long(settings):
+    settings = replace(settings, max_prompt_tokens=2)
+    response = await post(create_app(settings, FakeWorker()), {"prompt": "one two three"})
+    assert response.status_code == 400
+
+
+async def test_output_too_long(settings):
+    response = await post(create_app(settings, FakeWorker()), {
+        "prompt": "hello", "max_new_tokens": settings.max_new_tokens + 1
+    })
+    assert response.status_code == 400
+
+
+async def test_model_context_window_rejected(settings):
+    response = await post(
+        create_app(settings, FakeWorker(context_window=4)),
+        {"prompt": "one two three", "max_new_tokens": 2},
+    )
+    assert response.status_code == 400
+    body = response.json()["error"]
+    assert body["code"] == "context_window_exceeded"
+    assert body["details"]["context_window_tokens"] == 4
+
+
+async def test_schema_errors_are_structured(settings):
+    response = await post(
+        create_app(settings, FakeWorker()),
+        {"prompt": "hello", "temperature": -1},
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "request_validation_error"
+
+
+async def test_concurrency_limiter_rejects():
+    limiter = ConcurrencyLimiter(1)
+    async with limiter.slot():
+        try:
+            async with limiter.slot():
+                assert False
+        except Exception as exc:
+            assert exc.status_code == 429

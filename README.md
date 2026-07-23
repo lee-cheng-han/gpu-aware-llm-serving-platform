@@ -1,0 +1,161 @@
+# LLM Inference Scheduler with Dynamic Micro-Batching
+
+## Overview
+
+A lean local FastAPI server for studying the systems tradeoff between serial request
+execution and short-window dynamic micro-batching on a CPU Hugging Face causal model.
+The deep axis is queueing and scheduling—not chatbot product features.
+
+## What This Project Demonstrates
+
+- FastAPI, a bounded `asyncio` queue, and explicit request lifecycle states
+- Local CPU Hugging Face inference (`sshleifer/tiny-gpt2` by default)
+- Model-aware context-window validation and optional startup warm-up
+- No-batching and dynamic micro-batching schedulers
+- Queue, concurrency, prompt, output, and deadline limits
+- Single-request SSE streaming and JSON metrics
+- Repeatable benchmark clients, Docker, and one-pod kind manifests
+
+## What This Project Is Not
+
+- Not “mini-vLLM,” PagedAttention, continuous batching, or a vLLM/TGI/Triton replacement
+- Not GPU, multi-worker, multi-model, distributed, production-scale, or multi-tenant
+- Not batched interleaved streaming or a custom KV-cache implementation
+
+This project is not a replacement for vLLM, TGI, or Triton. It does not implement
+PagedAttention, GPU KV-cache paging, tensor parallelism, continuous batching, or
+production-scale distributed serving. v1 focuses on local request scheduling and dynamic
+micro-batching using a CPU Hugging Face model.
+
+## Architecture
+
+```text
+POST /v1/generate -> validate/admit -> bounded queue -> scheduler policy -> CPU model
+                                                \------> JSON metrics
+POST /v1/generate_stream -> validate/admit -> unbatched CPU streamer -> SSE
+```
+
+Generation runs off the event loop in a thread; one scheduler owns one lazy-loaded model.
+See [architecture details](docs/architecture.md).
+
+## Quick Start
+
+Python 3.11 is recommended.
+
+```bash
+make install
+make run
+curl http://localhost:8000/health
+```
+
+Configuration is read from the environment:
+
+| Variable | Default |
+|---|---:|
+| `MODEL_NAME` | `sshleifer/tiny-gpt2` |
+| `SCHEDULER_POLICY` | `no_batching` |
+| `MAX_PROMPT_TOKENS` / `MAX_NEW_TOKENS` | `1024` / `128` |
+| `MAX_QUEUE_SIZE` / `MAX_CONCURRENT_REQUESTS` | `128` / `16` |
+| `REQUEST_TIMEOUT_SECONDS` | `60` |
+| `MAX_BATCH_SIZE` / `MAX_WAIT_MS` | `8` / `25` |
+| `MAX_TOTAL_BATCH_TOKENS` | `1024` |
+| `MODEL_WARMUP_ON_START` | `false` |
+
+## API Usage
+
+```bash
+curl http://localhost:8000/health
+curl http://localhost:8000/ready
+
+curl -X POST http://localhost:8000/v1/generate \
+  -H 'content-type: application/json' \
+  -d '{"prompt":"Explain cache memory simply.","max_new_tokens":32,"temperature":0.7}'
+
+curl -N -X POST http://localhost:8000/v1/generate_stream \
+  -H 'content-type: application/json' \
+  -d '{"prompt":"Explain PCIe simply.","max_new_tokens":32,"temperature":0.7}'
+
+curl http://localhost:8000/metrics
+```
+
+Invalid limits return 400, concurrent admission returns 429, a full queue returns 503,
+and expired generation requests return 504.
+
+Errors use a stable `{"error":{"code","message","details"}}` envelope. `/health`
+reports process health; `/ready` returns 200 only after the model has loaded. Set
+`MODEL_WARMUP_ON_START=true` to load the model before accepting traffic. Prompt plus
+requested output tokens must fit the model's context window. Set `temperature` to `0`
+for deterministic greedy decoding.
+
+## Scheduler Design
+
+`no_batching` takes exactly one request and makes one model call. `dynamic_batch` takes a
+first request, waits up to `MAX_WAIT_MS`, and collects until batch-size or estimated total
+token limits are reached. Prompts are left-padded, generated in one call, then split back
+by request. Deadlines begin at queue insertion and include both collection and generation.
+Generation cannot be preempted; an over-deadline result is marked timeout after it returns.
+
+Only requests with matching output length and temperature share a model call, preserving
+request semantics. Controlled benchmarks should still use uniform parameters. A production
+scheduler would maintain explicit compatibility buckets instead of stopping collection at
+the first incompatible FIFO candidate.
+
+## Metrics
+
+`/metrics` returns request outcome counters, active/queued gauges, p50/p95 latency and
+TTFT, average queue wait and batch size, plus process-lifetime request/token throughput.
+Metrics are in memory and reset on restart.
+
+## Benchmark Methodology
+
+First check model scale:
+
+```bash
+python benchmark/sanity_model_benchmark.py \
+  --models sshleifer/tiny-gpt2 gpt2 --requests 50 --concurrency 8 --max-new-tokens 32
+```
+
+Then restart the server for each policy and run:
+
+```bash
+SCHEDULER_POLICY=no_batching make run
+python benchmark/compare_schedulers.py --policy no_batching
+
+SCHEDULER_POLICY=dynamic_batch make run
+python benchmark/compare_schedulers.py --policy dynamic_batch
+```
+
+The client refuses to label results with a policy different from the server response.
+See [the full methodology](docs/benchmark_methodology.md).
+
+## Benchmark Results
+
+No measurements are committed yet. Populate this only with recorded runs and include the
+model, hardware, and settings.
+
+| Model / hardware | Policy | p50 ms | p95 ms | req/s | tokens/s | avg batch |
+|---|---|---:|---:|---:|---:|---:|
+| _pending measured run_ | no_batching | — | — | — | — | 1 |
+| _pending measured run_ | dynamic_batch | — | — | — | — | — |
+
+## Docker
+
+```bash
+docker build -t llm-inference-scheduler:local .
+docker run --rm -p 8000:8000 llm-inference-scheduler:local
+```
+
+## Kubernetes
+
+The one-replica kind flow is documented in [k8s/README.md](k8s/README.md).
+
+## Tradeoffs
+
+Read [Tradeoffs and Simplifications](docs/tradeoffs.md), especially the timeout,
+streaming, CPU-only, and single-worker semantics.
+
+## Future Work
+
+API keys, tenant-aware/Redis-backed limits, Prometheus/Grafana, multi-worker routing, GPU
+serving, real continuous batching, cancellation, sampling-parameter bucketing, and
+batched streaming are intentionally future work.

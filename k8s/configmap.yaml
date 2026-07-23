@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-inference
+  namespace: llm-inference
+data:
+  MODEL_NAME: sshleifer/tiny-gpt2
+  SCHEDULER_POLICY: dynamic_batch
+  MAX_PROMPT_TOKENS: "1024"
+  MAX_NEW_TOKENS: "128"
+  MAX_QUEUE_SIZE: "128"
+  MAX_CONCURRENT_REQUESTS: "16"
+  REQUEST_TIMEOUT_SECONDS: "60"
+  MAX_BATCH_SIZE: "8"
+  MAX_WAIT_MS: "25"
+  MAX_TOTAL_BATCH_TOKENS: "1024"
+  MODEL_WARMUP_ON_START: "false"
