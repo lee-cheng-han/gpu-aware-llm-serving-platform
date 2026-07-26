@@ -21,3 +21,13 @@ def test_metrics_counters_and_average():
     assert data["completed_requests"] == 1
     assert data["avg_batch_size"] == 4
     assert data["avg_queue_wait_ms"] == pytest.approx(10)
+
+
+def test_cancelled_request_is_counted_once():
+    metrics = Metrics()
+    item = InferenceRequest("x", 1, 0, 1, "no_batching")
+    item.queued_at = 1
+    item.cancel()
+    metrics.record(item)
+    metrics.record(item)
+    assert metrics.snapshot()["cancelled_requests"] == 1

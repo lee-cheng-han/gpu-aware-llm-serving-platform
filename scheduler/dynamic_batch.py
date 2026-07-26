@@ -15,8 +15,17 @@ async def collect_batch(queue, first, settings, metrics):
             candidate = await asyncio.wait_for(queue.get(), remaining)
         except asyncio.TimeoutError:
             break
+        if candidate is None:
+            # Preserve the shutdown signal for the outer scheduler loop.
+            queue.task_done()
+            queue.put_nowait(None)
+            break
         if candidate.timed_out(settings.request_timeout_seconds):
             finish_timeout(candidate, metrics)
+            queue.task_done()
+            continue
+        if candidate.status == RequestStatus.CANCELLED:
+            metrics.record(candidate)
             queue.task_done()
             continue
         # A single generate() call has one sampling configuration. Keep v1
@@ -41,14 +50,18 @@ async def process_batch(batch, worker, settings, metrics):
     now = time.monotonic()
     active = []
     for request in batch:
-        if request.timed_out(settings.request_timeout_seconds):
+        if request.status == RequestStatus.CANCELLED:
+            metrics.record(request)
+        elif request.timed_out(settings.request_timeout_seconds):
             finish_timeout(request, metrics)
         else:
             request.status, request.started_at = RequestStatus.RUNNING, now
-            request.batch_size = len(batch)
+            request.batch_size = 0  # Set once expired/cancelled entries are filtered.
             active.append(request)
     if not active:
         return
+    for request in active:
+        request.batch_size = len(active)
     try:
         results = await asyncio.to_thread(
             worker.generate_batch, [r.prompt for r in active],
@@ -56,18 +69,20 @@ async def process_batch(batch, worker, settings, metrics):
         )
         completed = time.monotonic()
         for request, result in zip(active, results):
-            request.completed_at = completed
+            cancelled = request.status == RequestStatus.CANCELLED
+            request.completed_at = request.completed_at or completed
             request.input_tokens, request.output_tokens = result.input_tokens, result.output_tokens
             request.result_text = result.text
-            request.status = (RequestStatus.TIMEOUT if request.timed_out(
-                settings.request_timeout_seconds) else RequestStatus.COMPLETED)
+            request.status = (
+                RequestStatus.CANCELLED if cancelled else
+                RequestStatus.TIMEOUT if request.timed_out(settings.request_timeout_seconds)
+                else RequestStatus.COMPLETED
+            )
             metrics.record(request)
-            if request.future and not request.future.done():
-                request.future.set_result(request)
+            request.finish(request.status, request.error_message)
     except Exception as exc:
         for request in active:
             request.status, request.error_message = RequestStatus.FAILED, str(exc)
             request.completed_at = time.monotonic()
             metrics.record(request)
-            if request.future and not request.future.done():
-                request.future.set_result(request)
+            request.finish(request.status, request.error_message)

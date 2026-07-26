@@ -13,6 +13,16 @@ class RequestStatus(str, Enum):
     FAILED = "FAILED"
     REJECTED = "REJECTED"
     TIMEOUT = "TIMEOUT"
+    CANCELLED = "CANCELLED"
+
+
+TERMINAL_STATUSES = {
+    RequestStatus.COMPLETED,
+    RequestStatus.FAILED,
+    RequestStatus.REJECTED,
+    RequestStatus.TIMEOUT,
+    RequestStatus.CANCELLED,
+}
 
 
 @dataclass
@@ -35,6 +45,22 @@ class InferenceRequest:
     error_message: str = ""
     batch_size: int = 1
     future: asyncio.Future | None = None
+    metrics_recorded: bool = False
 
     def timed_out(self, timeout: float) -> bool:
         return bool(self.queued_at and time.monotonic() - self.queued_at >= timeout)
+
+    @property
+    def terminal(self) -> bool:
+        return self.status in TERMINAL_STATUSES
+
+    def finish(self, status: RequestStatus, error_message: str = "") -> None:
+        self.status = status
+        self.error_message = error_message
+        self.completed_at = self.completed_at or time.monotonic()
+        if self.future and not self.future.done():
+            self.future.set_result(self)
+
+    def cancel(self, reason: str = "client disconnected") -> None:
+        if not self.terminal:
+            self.finish(RequestStatus.CANCELLED, reason)

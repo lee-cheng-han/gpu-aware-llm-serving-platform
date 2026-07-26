@@ -20,6 +20,7 @@ class Metrics:
         self.total_requests = self.completed_requests = 0
         self.failed_requests = self.rejected_requests = 0
         self.timeout_requests = self.queue_full_rejections = 0
+        self.cancelled_requests = 0
         self.active_requests = self.queued_requests = 0
         self.latencies: list[float] = []
         self.ttfts: list[float] = []
@@ -39,10 +40,14 @@ class Metrics:
 
     def record(self, request) -> None:
         with self._lock:
+            if request.metrics_recorded:
+                return
+            request.metrics_recorded = True
             status = request.status.value
             self.completed_requests += status == "COMPLETED"
             self.timeout_requests += status == "TIMEOUT"
             self.failed_requests += status == "FAILED"
+            self.cancelled_requests += status == "CANCELLED"
             if request.completed_at:
                 self.latencies.append((request.completed_at - request.queued_at) * 1000)
             if request.started_at:
@@ -62,6 +67,7 @@ class Metrics:
                 "failed_requests": self.failed_requests,
                 "rejected_requests": self.rejected_requests,
                 "timeout_requests": self.timeout_requests,
+                "cancelled_requests": self.cancelled_requests,
                 "queue_full_rejections": self.queue_full_rejections,
                 "active_requests": active,
                 "queued_requests": queued,

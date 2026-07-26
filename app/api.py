@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from app.errors import APIError
 from app.limits import validate_request
 from app.schemas import GenerateRequest, GenerateResponse, ReadinessResponse
+from scheduler.queue import QueueClosed
 from scheduler.request import InferenceRequest, RequestStatus
 
 router = APIRouter()
@@ -81,12 +82,22 @@ async def generate(body: GenerateRequest, request: Request):
             )
             try:
                 await state.request_queue.submit(item)
+            except QueueClosed:
+                state.metrics.rejected()
+                raise APIError(503, "service_shutting_down", "server is shutting down")
             except asyncio.QueueFull:
-                state.metrics.rejected(queue_full=True)
                 raise APIError(503, "queue_full", "scheduler queue is full")
-            result = await item.future
+            try:
+                # Shield keeps client cancellation from cancelling the scheduler's
+                # result handle. Queued cancellations can then be skipped safely.
+                result = await asyncio.shield(item.future)
+            except asyncio.CancelledError:
+                item.cancel("client disconnected")
+                raise
             if result.status == RequestStatus.TIMEOUT:
                 raise APIError(504, "request_timeout", "request timed out")
+            if result.status == RequestStatus.REJECTED:
+                raise APIError(503, "service_shutting_down", result.error_message)
             if result.status == RequestStatus.FAILED:
                 raise APIError(
                     500, "generation_failed", "model generation failed",
@@ -94,8 +105,10 @@ async def generate(body: GenerateRequest, request: Request):
                 )
             return _response(result)
     except HTTPException as exc:
-        if exc.status_code == 429:
-            state.metrics.rejected()
+        if 400 <= exc.status_code < 500 or exc.status_code == 503:
+            code = exc.detail.get("code") if isinstance(exc.detail, dict) else ""
+            if code != "service_shutting_down":
+                state.metrics.rejected(queue_full=code == "queue_full")
         raise
 
 

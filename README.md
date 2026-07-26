@@ -13,6 +13,7 @@ The deep axis is queueing and scheduling—not chatbot product features.
 - Model-aware context-window validation and optional startup warm-up
 - No-batching and dynamic micro-batching schedulers
 - Queue, concurrency, prompt, output, and deadline limits
+- Cancellation-aware request futures and graceful queue shutdown
 - Single-request SSE streaming and JSON metrics
 - Repeatable benchmark clients, Docker, and one-pod kind manifests
 
@@ -94,6 +95,10 @@ first request, waits up to `MAX_WAIT_MS`, and collects until batch-size or estim
 token limits are reached. Prompts are left-padded, generated in one call, then split back
 by request. Deadlines begin at queue insertion and include both collection and generation.
 Generation cannot be preempted; an over-deadline result is marked timeout after it returns.
+On shutdown, the server stops admission, rejects queued requests, wakes an idle scheduler,
+and allows an active model call to finish so no request future is abandoned. If a client
+disconnects, queued work is marked cancelled and skipped; running Hugging Face generation
+still finishes because v1 cannot preempt it.
 
 Only requests with matching output length and temperature share a model call, preserving
 request semantics. Controlled benchmarks should still use uniform parameters. A production
@@ -104,7 +109,8 @@ the first incompatible FIFO candidate.
 
 `/metrics` returns request outcome counters, active/queued gauges, p50/p95 latency and
 TTFT, average queue wait and batch size, plus process-lifetime request/token throughput.
-Metrics are in memory and reset on restart.
+It also reports cancelled requests separately from failures and timeouts. Metrics are in
+memory and reset on restart.
 
 ## Benchmark Methodology
 

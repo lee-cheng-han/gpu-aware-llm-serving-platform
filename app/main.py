@@ -28,7 +28,7 @@ def create_app(settings: Settings | None = None, worker=None) -> FastAPI:
         ))
         app.state.scheduler_task = task
         yield
-        task.cancel()
+        app.state.request_queue.close(app.state.metrics)
         with suppress(asyncio.CancelledError):
             await task
 

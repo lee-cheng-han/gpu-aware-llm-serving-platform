@@ -47,6 +47,11 @@ requests are skipped. Hugging Face generation is not safely preempted in v1: if 
 passes during `generate()`, work finishes and the request is marked `TIMEOUT` afterward.
 This is honest deadline accounting, not compute cancellation.
 
+Client cancellation follows the same compute limitation. A request cancelled while queued
+is skipped. If generation is already running, its result is discarded after the blocking
+model call returns. Graceful shutdown rejects queued work and waits for the active call so
+all scheduler result handles reach a terminal state.
+
 ## Why streaming is single-request only
 
 The SSE endpoint bypasses the batching queue and uses a Transformers streamer. Batched,

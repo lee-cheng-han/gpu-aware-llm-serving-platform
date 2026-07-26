@@ -14,3 +14,8 @@ window after the first item and dispatches a padded micro-batch. Blocking PyTorc
 runs in a thread so the event loop can continue serving health and metrics requests.
 There is deliberately one model worker, because parallel model calls would confound the
 scheduling comparison and can oversubscribe CPU threads.
+
+The bounded queue owns admission state as well as storage. During shutdown it rejects
+queued requests, inserts a sentinel to wake an idle scheduler, and lets an active blocking
+generation return. Client cancellation is recorded on the request future so queued work
+can be skipped without leaving unresolved API waiters.

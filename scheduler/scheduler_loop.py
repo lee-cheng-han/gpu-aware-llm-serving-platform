@@ -7,6 +7,9 @@ async def run_scheduler(request_queue, worker, settings, metrics):
     queue = request_queue.queue
     while True:
         first = await queue.get()
+        if first is None:
+            queue.task_done()
+            break
         try:
             if settings.scheduler_policy == "dynamic_batch":
                 batch = await collect_batch(queue, first, settings, metrics)
