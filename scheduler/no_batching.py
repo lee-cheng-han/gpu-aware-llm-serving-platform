@@ -16,6 +16,8 @@ async def process_one(request, worker, settings, metrics):
         finish_timeout(request, metrics)
         return
     request.status, request.started_at, request.batch_size = RequestStatus.RUNNING, time.monotonic(), 1
+    request.batch_collection_ms = 0
+    metrics.record_model_invocation(batch_size=1, collection_ms=0)
     try:
         result = await asyncio.to_thread(
             worker.generate_one, request.prompt, request.max_new_tokens, request.temperature
@@ -25,6 +27,9 @@ async def process_one(request, worker, settings, metrics):
         request.input_tokens, request.output_tokens, request.result_text = (
             result.input_tokens, result.output_tokens, result.text
         )
+        request.worker_tokenization_ms = result.tokenization_ms
+        request.generation_ms = result.generation_ms
+        request.decoding_ms = result.decoding_ms
         request.status = (
             RequestStatus.CANCELLED if cancelled else
             RequestStatus.TIMEOUT if request.timed_out(settings.request_timeout_seconds)

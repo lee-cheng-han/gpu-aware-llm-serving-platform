@@ -19,3 +19,9 @@ The bounded queue owns admission state as well as storage. During shutdown it re
 queued requests, inserts a sentinel to wake an idle scheduler, and lets an active blocking
 generation return. Client cancellation is recorded on the request future so queued work
 can be skipped without leaving unresolved API waiters.
+
+Timing is captured at execution boundaries: API prompt-token validation, scheduler queue
+wait, batch collection, worker tokenization, the blocking `model.generate()` call, and
+per-result decoding. The no-batching loop awaits each complete worker call before taking
+the next queue item, making it a genuinely serial reference rather than a concurrency
+configuration that happens to use batches of one.

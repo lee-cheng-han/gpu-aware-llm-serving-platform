@@ -11,6 +11,7 @@ class RequestQueue:
     def __init__(self, maximum: int):
         self.queue: asyncio.Queue[InferenceRequest | None] = asyncio.Queue(maxsize=maximum)
         self.accepting = True
+        self.max_observed_size = 0
 
     async def submit(self, request: InferenceRequest) -> None:
         request.future = asyncio.get_running_loop().create_future()
@@ -21,6 +22,7 @@ class RequestQueue:
         request.status = RequestStatus.QUEUED
         try:
             self.queue.put_nowait(request)
+            self.max_observed_size = max(self.max_observed_size, self.queue.qsize())
         except asyncio.QueueFull:
             request.finish(RequestStatus.REJECTED, "scheduler queue is full")
             raise

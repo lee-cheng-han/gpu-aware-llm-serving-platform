@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from threading import Lock
 from threading import Thread
+import time
 
 from inference.model_loader import load_model
 
@@ -10,6 +11,9 @@ class GenerationResult:
     text: str
     input_tokens: int
     output_tokens: int
+    tokenization_ms: float = 0
+    generation_ms: float = 0
+    decoding_ms: float = 0
 
 
 class InferenceWorker:
@@ -60,8 +64,10 @@ class InferenceWorker:
     def generate_batch(self, prompts: list[str], max_new_tokens: int, temperature: float) -> list[GenerationResult]:
         import torch
         self._ensure_loaded()
+        tokenization_started = time.perf_counter()
         encoded = self.tokenizer(prompts, return_tensors="pt", padding=True)
         input_lengths = encoded["attention_mask"].sum(dim=1).tolist()
+        tokenization_ms = (time.perf_counter() - tokenization_started) * 1000
         generation_args = {
             "max_new_tokens": max_new_tokens,
             "do_sample": temperature > 0,
@@ -69,11 +75,14 @@ class InferenceWorker:
         }
         if temperature > 0:
             generation_args["temperature"] = temperature
+        generation_started = time.perf_counter()
         with torch.no_grad():
             outputs = self.model.generate(**encoded, **generation_args)
+        generation_ms = (time.perf_counter() - generation_started) * 1000
         prompt_width = encoded["input_ids"].shape[1]
         results = []
         for i, output in enumerate(outputs):
+            decoding_started = time.perf_counter()
             raw_new_ids = output[prompt_width:].tolist()
             meaningful_ids = []
             for token_id in raw_new_ids:
@@ -81,9 +90,14 @@ class InferenceWorker:
                 if token_id == self.tokenizer.eos_token_id:
                     break
             new_ids = meaningful_ids
+            text = self.tokenizer.decode(new_ids, skip_special_tokens=True)
             results.append(GenerationResult(
-                self.tokenizer.decode(new_ids, skip_special_tokens=True),
-                int(input_lengths[i]), int(len(new_ids)),
+                text=text,
+                input_tokens=int(input_lengths[i]),
+                output_tokens=int(len(new_ids)),
+                tokenization_ms=tokenization_ms,
+                generation_ms=generation_ms,
+                decoding_ms=(time.perf_counter() - decoding_started) * 1000,
             ))
         return results
 

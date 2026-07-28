@@ -11,8 +11,11 @@ restart with `dynamic_batch`; record `MAX_BATCH_SIZE`, `MAX_WAIT_MS`, and total 
 Run several trials and retain raw JSON, not only the best run.
 
 Measure client p50/p95 end-to-end latency, server queue wait, achieved requests and output
-tokens per second, and average batch size. TTFT is meaningful for the single-request SSE
-path but is not directly comparable to non-streaming batched completion latency.
+tokens per second, queue-depth high-water mark, model invocation count, batch-size
+distribution, and average batch size. Keep validation tokenization, worker tokenization,
+batch collection, model generation, and decoding timings separate so a throughput change
+is not incorrectly attributed to model execution. TTFT is meaningful for the single-request
+SSE path but is not directly comparable to non-streaming batched completion latency.
 
 Dynamic batching can improve throughput by amortizing model work while increasing latency
 through the batching window and padding. A throughput win with worse tail latency is a

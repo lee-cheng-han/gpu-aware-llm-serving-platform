@@ -108,9 +108,11 @@ the first incompatible FIFO candidate.
 ## Metrics
 
 `/metrics` returns request outcome counters, active/queued gauges, p50/p95 latency and
-TTFT, average queue wait and batch size, plus process-lifetime request/token throughput.
-It also reports cancelled requests separately from failures and timeouts. Metrics are in
-memory and reset on restart.
+TTFT, queue-wait percentiles, queue high-water mark, model invocation count, batch-size
+histogram, and average validation-tokenization, worker-tokenization, generation, decoding,
+and batch-collection times. It reports both process-lifetime and rolling 60-second request
+and token throughput. Cancelled requests remain separate from failures and timeouts.
+Metrics are in memory and reset on restart.
 
 ## Benchmark Methodology
 

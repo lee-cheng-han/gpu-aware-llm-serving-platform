@@ -44,6 +44,11 @@ class InferenceRequest:
     result_text: str = ""
     error_message: str = ""
     batch_size: int = 1
+    validation_tokenization_ms: float = 0
+    worker_tokenization_ms: float = 0
+    generation_ms: float = 0
+    decoding_ms: float = 0
+    batch_collection_ms: float = 0
     future: asyncio.Future | None = None
     metrics_recorded: bool = False
 

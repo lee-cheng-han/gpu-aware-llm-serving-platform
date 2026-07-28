@@ -24,6 +24,7 @@ async def test_queue_full_marks_request_rejected():
         await queue.submit(rejected)
     assert rejected.status == RequestStatus.REJECTED
     assert rejected.future.done()
+    assert queue.max_observed_size == 1
 
 
 async def test_closed_queue_rejects_new_submission():

@@ -10,6 +10,9 @@ class FakeResult:
     text: str
     input_tokens: int
     output_tokens: int
+    tokenization_ms: float = 1
+    generation_ms: float = 2
+    decoding_ms: float = 0.5
 
 
 class FakeWorker:

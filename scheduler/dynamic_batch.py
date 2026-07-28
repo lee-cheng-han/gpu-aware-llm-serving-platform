@@ -5,6 +5,7 @@ from scheduler.request import RequestStatus
 
 
 async def collect_batch(queue, first, settings, metrics):
+    collection_started = time.monotonic()
     batch, total = [first], first.estimated_tokens + first.max_new_tokens
     deadline = time.monotonic() + settings.max_wait_ms / 1000
     while len(batch) < settings.max_batch_size:
@@ -43,6 +44,9 @@ async def collect_batch(queue, first, settings, metrics):
             break
         batch.append(candidate)
         total += cost
+    collection_ms = (time.monotonic() - collection_started) * 1000
+    for request in batch:
+        request.batch_collection_ms = collection_ms
     return batch
 
 
@@ -62,6 +66,10 @@ async def process_batch(batch, worker, settings, metrics):
         return
     for request in active:
         request.batch_size = len(active)
+    metrics.record_model_invocation(
+        batch_size=len(active),
+        collection_ms=max(request.batch_collection_ms for request in active),
+    )
     try:
         results = await asyncio.to_thread(
             worker.generate_batch, [r.prompt for r in active],
@@ -73,6 +81,9 @@ async def process_batch(batch, worker, settings, metrics):
             request.completed_at = request.completed_at or completed
             request.input_tokens, request.output_tokens = result.input_tokens, result.output_tokens
             request.result_text = result.text
+            request.worker_tokenization_ms = result.tokenization_ms
+            request.generation_ms = result.generation_ms
+            request.decoding_ms = result.decoding_ms
             request.status = (
                 RequestStatus.CANCELLED if cancelled else
                 RequestStatus.TIMEOUT if request.timed_out(settings.request_timeout_seconds)

@@ -25,16 +25,18 @@ def _response(item: InferenceRequest) -> GenerateResponse:
     )
 
 
-async def _validated(body: GenerateRequest, request: Request) -> int:
+async def _validated(body: GenerateRequest, request: Request) -> tuple[int, float]:
     if not body.prompt.strip():
         raise APIError(400, "empty_prompt", "prompt must not be empty")
     worker = request.app.state.worker
     # Both operations touch the same tokenizer/model. Keep them serial: the
     # context lookup is trivial after the token-count call has loaded the model.
+    tokenization_started = time.perf_counter()
     if getattr(worker, "run_inline_for_tests", False):
         tokens = worker.count_prompt_tokens(body.prompt)
     else:
         tokens = await asyncio.to_thread(worker.count_prompt_tokens, body.prompt)
+    tokenization_ms = (time.perf_counter() - tokenization_started) * 1000
     context_window = worker.context_window_tokens()
     validate_request(
         body.prompt,
@@ -43,7 +45,7 @@ async def _validated(body: GenerateRequest, request: Request) -> int:
         context_window,
         request.app.state.settings,
     )
-    return tokens
+    return tokens, tokenization_ms
 
 
 @router.get("/health")
@@ -75,11 +77,12 @@ async def generate(body: GenerateRequest, request: Request):
     state.metrics.received()
     try:
         async with state.limiter.slot():
-            tokens = await _validated(body, request)
+            tokens, validation_tokenization_ms = await _validated(body, request)
             item = InferenceRequest(
                 body.prompt, body.max_new_tokens, body.temperature, tokens,
                 state.settings.scheduler_policy,
             )
+            item.validation_tokenization_ms = validation_tokenization_ms
             try:
                 await state.request_queue.submit(item)
             except QueueClosed:
@@ -117,7 +120,7 @@ async def generate_stream(body: GenerateRequest, request: Request):
     """Single-request SSE; it intentionally bypasses the batching queue."""
     state = request.app.state
     state.metrics.received()
-    tokens = await _validated(body, request)
+    tokens, validation_tokenization_ms = await _validated(body, request)
     if state.limiter.active >= state.limiter.maximum:
         state.metrics.rejected()
         raise APIError(
@@ -128,6 +131,7 @@ async def generate_stream(body: GenerateRequest, request: Request):
         body.prompt, body.max_new_tokens, body.temperature, tokens, "single_stream"
     )
     item.queued_at = item.started_at = time.monotonic()
+    item.validation_tokenization_ms = validation_tokenization_ms
     item.status = RequestStatus.RUNNING
 
     async def events():
@@ -159,4 +163,8 @@ async def generate_stream(body: GenerateRequest, request: Request):
 @router.get("/metrics")
 async def metrics(request: Request):
     state = request.app.state
-    return state.metrics.snapshot(state.request_queue.queue.qsize(), state.limiter.active)
+    return state.metrics.snapshot(
+        queued=state.request_queue.queue.qsize(),
+        active=state.limiter.active,
+        max_queue_depth=state.request_queue.max_observed_size,
+    )
