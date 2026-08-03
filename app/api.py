@@ -86,10 +86,12 @@ async def generate(body: GenerateRequest, request: Request):
             try:
                 await state.request_queue.submit(item)
             except QueueClosed:
-                state.metrics.rejected()
-                raise APIError(503, "service_shutting_down", "server is shutting down")
+                state.metrics.rejected(reason="service_shutting_down")
+                raise APIError(
+                    503, "service_shutting_down", "server is shutting down"
+                ) from None
             except asyncio.QueueFull:
-                raise APIError(503, "queue_full", "scheduler queue is full")
+                raise APIError(503, "queue_full", "scheduler queue is full") from None
             try:
                 # Shield keeps client cancellation from cancelling the scheduler's
                 # result handle. Queued cancellations can then be skipped safely.
@@ -111,7 +113,10 @@ async def generate(body: GenerateRequest, request: Request):
         if 400 <= exc.status_code < 500 or exc.status_code == 503:
             code = exc.detail.get("code") if isinstance(exc.detail, dict) else ""
             if code != "service_shutting_down":
-                state.metrics.rejected(queue_full=code == "queue_full")
+                state.metrics.rejected(
+                    queue_full=code == "queue_full",
+                    reason=code or "http_error",
+                )
         raise
 
 
@@ -120,13 +125,32 @@ async def generate_stream(body: GenerateRequest, request: Request):
     """Single-request SSE; it intentionally bypasses the batching queue."""
     state = request.app.state
     state.metrics.received()
-    tokens, validation_tokenization_ms = await _validated(body, request)
-    if state.limiter.active >= state.limiter.maximum:
-        state.metrics.rejected()
-        raise APIError(
-            429, "concurrency_limit_exceeded",
-            "maximum concurrent requests exceeded",
-        )
+    try:
+        await state.stream_tracker.start()
+    except HTTPException as exc:
+        code = exc.detail.get("code") if isinstance(exc.detail, dict) else "http_error"
+        state.metrics.rejected(reason=code)
+        raise
+    try:
+        # Reserve admission before returning SSE headers. Acquiring inside the
+        # body iterator creates a race in which two streams can both pass a
+        # pre-check and one fails only after the response has started.
+        await state.limiter.acquire()
+    except HTTPException as exc:
+        await state.stream_tracker.finish()
+        code = exc.detail.get("code") if isinstance(exc.detail, dict) else "http_error"
+        state.metrics.rejected(reason=code)
+        raise
+    try:
+        tokens, validation_tokenization_ms = await _validated(body, request)
+    except BaseException as exc:
+        await state.limiter.release()
+        await state.stream_tracker.finish()
+        if isinstance(exc, HTTPException):
+            code = exc.detail.get("code") if isinstance(exc.detail, dict) else "http_error"
+            state.metrics.rejected(reason=code)
+        raise
+
     item = InferenceRequest(
         body.prompt, body.max_new_tokens, body.temperature, tokens, "single_stream"
     )
@@ -135,27 +159,48 @@ async def generate_stream(body: GenerateRequest, request: Request):
     item.status = RequestStatus.RUNNING
 
     async def events():
-        async with state.limiter.slot():
-            try:
-                iterator = state.worker.stream(body.prompt, body.max_new_tokens, body.temperature)
-                while True:
+        try:
+            state.metrics.record_model_invocation(
+                batch_size=1, collection_ms=0, batched_call=False
+            )
+            state.metrics.model_execution_started()
+            iterator = state.worker.stream(body.prompt, body.max_new_tokens, body.temperature)
+            while True:
+                if getattr(state.worker, "stream_inline_for_tests", False):
+                    chunk = next(iterator, None)
+                else:
                     token = await asyncio.to_thread(next, iterator, None)
-                    if token is None:
-                        break
-                    if not item.first_token_at:
-                        item.first_token_at = time.monotonic()
-                    item.output_tokens += 1
-                    yield f"data: {json.dumps({'request_id': item.request_id, 'token': token})}\n\n"
-                item.completed_at = time.monotonic()
-                item.status = (RequestStatus.TIMEOUT if item.timed_out(
-                    state.settings.request_timeout_seconds) else RequestStatus.COMPLETED)
-            except Exception as exc:
-                item.status, item.error_message = RequestStatus.FAILED, str(exc)
-                item.completed_at = time.monotonic()
-                yield f"data: {json.dumps({'request_id': item.request_id, 'error': str(exc)})}\n\n"
+                    chunk = token
+                if chunk is None:
+                    break
+                if not item.first_token_at:
+                    item.first_token_at = time.monotonic()
+                item.output_tokens = chunk.output_tokens
+                yield f"data: {json.dumps({'request_id': item.request_id, 'token': chunk.text})}\n\n"
+            item.completed_at = time.monotonic()
+            item.status = (RequestStatus.TIMEOUT if item.timed_out(
+                state.settings.request_timeout_seconds) else RequestStatus.COMPLETED)
+            yield f"data: {json.dumps({'request_id': item.request_id, 'done': True})}\n\n"
+        except asyncio.CancelledError:
+            item.cancel("streaming client disconnected")
+            raise
+        except Exception:
+            item.finish(RequestStatus.FAILED, "streaming model generation failed")
+            error_event = {
+                'request_id': item.request_id,
+                'error': {
+                    'code': 'generation_failed',
+                    'message': 'streaming model generation failed',
+                },
+            }
+            yield f"data: {json.dumps(error_event)}\n\n"
+            yield f"data: {json.dumps({'request_id': item.request_id, 'done': True})}\n\n"
+        finally:
             item.input_tokens = tokens
             state.metrics.record(item)
-            yield f"data: {json.dumps({'request_id': item.request_id, 'done': True})}\n\n"
+            state.metrics.model_execution_finished()
+            await state.limiter.release()
+            await state.stream_tracker.finish()
 
     return StreamingResponse(events(), media_type="text/event-stream")
 
@@ -163,8 +208,16 @@ async def generate_stream(body: GenerateRequest, request: Request):
 @router.get("/metrics")
 async def metrics(request: Request):
     state = request.app.state
-    return state.metrics.snapshot(
+    snapshot = state.metrics.snapshot(
         queued=state.request_queue.queue.qsize(),
         active=state.limiter.active,
         max_queue_depth=state.request_queue.max_observed_size,
     )
+    snapshot.update({
+        "model_name": state.settings.model_name,
+        "scheduler_policy": state.settings.scheduler_policy,
+        "max_batch_size": state.settings.max_batch_size,
+        "max_wait_ms": state.settings.max_wait_ms,
+        "max_total_batch_tokens": state.settings.max_total_batch_tokens,
+    })
+    return snapshot

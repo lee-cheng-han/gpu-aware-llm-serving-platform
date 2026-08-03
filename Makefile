@@ -1,10 +1,18 @@
-.PHONY: install run test docker-build docker-run benchmark-sanity benchmark-no-batching benchmark-dynamic-batch
+.PHONY: install install-dev run test test-model lint typecheck docker-build docker-run benchmark-sanity benchmark-no-batching benchmark-dynamic-batch
 install:
 	python -m pip install -r requirements.txt
+install-dev:
+	python -m pip install -r requirements-dev.txt
 run:
 	uvicorn app.main:app --host 0.0.0.0 --port 8000
 test:
 	pytest -q
+test-model:
+	RUN_MODEL_TESTS=1 pytest -m model -q
+lint:
+	ruff check .
+typecheck:
+	mypy
 docker-build:
 	docker build -t llm-inference-scheduler:local .
 docker-run:

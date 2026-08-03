@@ -1,5 +1,6 @@
 import asyncio
 import time
+
 from scheduler.request import InferenceRequest, RequestStatus
 
 
@@ -40,7 +41,7 @@ class RequestQueue:
                 break
             if request is not None:
                 request.finish(RequestStatus.REJECTED, "server is shutting down")
-                metrics.rejected()
+                metrics.rejected(reason="service_shutting_down")
                 rejected += 1
             self.queue.task_done()
         # Draining guarantees room for the sentinel even when the queue was full.

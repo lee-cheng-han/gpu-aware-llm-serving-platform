@@ -10,8 +10,7 @@ class ConcurrencyLimiter:
         self.active = 0
         self._lock = asyncio.Lock()
 
-    @asynccontextmanager
-    async def slot(self):
+    async def acquire(self) -> None:
         async with self._lock:
             if self.active >= self.maximum:
                 raise APIError(
@@ -19,11 +18,55 @@ class ConcurrencyLimiter:
                     "maximum concurrent requests exceeded",
                 )
             self.active += 1
+
+    async def release(self) -> None:
+        async with self._lock:
+            if self.active <= 0:
+                raise RuntimeError("concurrency limiter released without an active slot")
+            self.active -= 1
+
+    @asynccontextmanager
+    async def slot(self):
+        await self.acquire()
         try:
             yield
         finally:
-            async with self._lock:
-                self.active -= 1
+            await self.release()
+
+
+class StreamTracker:
+    """Tracks streams across response-body lifetime and coordinates shutdown."""
+
+    def __init__(self):
+        self.accepting = True
+        self.active = 0
+        self._lock = asyncio.Lock()
+        self._idle = asyncio.Event()
+        self._idle.set()
+
+    async def start(self) -> None:
+        async with self._lock:
+            if not self.accepting:
+                raise APIError(503, "service_shutting_down", "server is shutting down")
+            self.active += 1
+            self._idle.clear()
+
+    async def finish(self) -> None:
+        async with self._lock:
+            if self.active <= 0:
+                raise RuntimeError("stream tracker finished without an active stream")
+            self.active -= 1
+            if self.active == 0:
+                self._idle.set()
+
+    async def close(self, timeout: float) -> bool:
+        async with self._lock:
+            self.accepting = False
+        try:
+            await asyncio.wait_for(self._idle.wait(), timeout)
+            return True
+        except TimeoutError:
+            return False
 
 
 def validate_request(

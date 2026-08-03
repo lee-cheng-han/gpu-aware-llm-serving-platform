@@ -1,5 +1,5 @@
-from dataclasses import dataclass
 import os
+from dataclasses import dataclass
 
 
 def _env(name: str, default, cast):
@@ -34,6 +34,8 @@ class Settings:
     max_wait_ms: int = 25
     max_total_batch_tokens: int = 1024
     model_warmup_on_start: bool = False
+    shutdown_grace_seconds: float = 30
+    metrics_sample_limit: int = 10_000
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -51,6 +53,8 @@ class Settings:
             max_wait_ms=_env("MAX_WAIT_MS", 25, int),
             max_total_batch_tokens=_env("MAX_TOTAL_BATCH_TOKENS", 1024, int),
             model_warmup_on_start=_bool_env("MODEL_WARMUP_ON_START", False),
+            shutdown_grace_seconds=_env("SHUTDOWN_GRACE_SECONDS", 30, float),
+            metrics_sample_limit=_env("METRICS_SAMPLE_LIMIT", 10_000, int),
         )
 
     def validate(self) -> None:
@@ -59,8 +63,10 @@ class Settings:
         for name in (
             "port", "max_prompt_tokens", "max_new_tokens", "max_queue_size",
             "max_concurrent_requests", "max_batch_size", "max_total_batch_tokens",
+            "metrics_sample_limit",
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
-        if self.request_timeout_seconds <= 0 or self.max_wait_ms < 0:
+        if (self.request_timeout_seconds <= 0 or self.shutdown_grace_seconds <= 0
+                or self.max_wait_ms < 0):
             raise ValueError("timeout must be positive and wait must be non-negative")

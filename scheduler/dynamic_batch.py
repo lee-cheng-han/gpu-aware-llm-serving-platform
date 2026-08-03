@@ -1,10 +1,11 @@
 import asyncio
 import time
+
 from scheduler.no_batching import finish_timeout
 from scheduler.request import RequestStatus
 
 
-async def collect_batch(queue, first, settings, metrics):
+async def collect_batch(queue, first, settings, metrics, deferred=None):
     collection_started = time.monotonic()
     batch, total = [first], first.estimated_tokens + first.max_new_tokens
     deadline = time.monotonic() + settings.max_wait_ms / 1000
@@ -14,7 +15,7 @@ async def collect_batch(queue, first, settings, metrics):
             break
         try:
             candidate = await asyncio.wait_for(queue.get(), remaining)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             break
         if candidate is None:
             # Preserve the shutdown signal for the outer scheduler loop.
@@ -33,15 +34,22 @@ async def collect_batch(queue, first, settings, metrics):
         # batches semantically correct by batching only compatible requests.
         if (candidate.max_new_tokens != first.max_new_tokens or
                 candidate.temperature != first.temperature):
-            queue.put_nowait(candidate)
+            if deferred is None:
+                queue.put_nowait(candidate)
+                queue.task_done()
+                break
+            deferred.append(candidate)
             queue.task_done()
-            break
+            continue
         cost = candidate.estimated_tokens + candidate.max_new_tokens
         if batch and total + cost > settings.max_total_batch_tokens:
-            # FIFO is relaxed here: safely return the candidate to the queue.
-            queue.put_nowait(candidate)
+            if deferred is None:
+                queue.put_nowait(candidate)
+                queue.task_done()
+                break
+            deferred.append(candidate)
             queue.task_done()
-            break
+            continue
         batch.append(candidate)
         total += cost
     collection_ms = (time.monotonic() - collection_started) * 1000
@@ -70,13 +78,14 @@ async def process_batch(batch, worker, settings, metrics):
         batch_size=len(active),
         collection_ms=max(request.batch_collection_ms for request in active),
     )
+    metrics.model_execution_started()
     try:
         results = await asyncio.to_thread(
             worker.generate_batch, [r.prompt for r in active],
             active[0].max_new_tokens, active[0].temperature,
         )
         completed = time.monotonic()
-        for request, result in zip(active, results):
+        for request, result in zip(active, results, strict=True):
             cancelled = request.status == RequestStatus.CANCELLED
             request.completed_at = request.completed_at or completed
             request.input_tokens, request.output_tokens = result.input_tokens, result.output_tokens
@@ -97,3 +106,10 @@ async def process_batch(batch, worker, settings, metrics):
             request.completed_at = time.monotonic()
             metrics.record(request)
             request.finish(request.status, request.error_message)
+    except asyncio.CancelledError:
+        for request in active:
+            request.finish(RequestStatus.FAILED, "shutdown grace period expired")
+            metrics.record(request)
+        raise
+    finally:
+        metrics.model_execution_finished()

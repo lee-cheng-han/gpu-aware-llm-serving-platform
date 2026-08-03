@@ -54,3 +54,17 @@ def test_phase_metrics_and_recent_throughput():
     assert data["max_queue_depth"] == 4
     assert data["recent_requests_per_second"] > 0
     assert data["recent_tokens_per_second"] > 0
+
+
+def test_metric_samples_are_bounded_and_rejections_are_grouped():
+    metrics = Metrics(sample_limit=2)
+    for index in range(3):
+        item = InferenceRequest("x", 1, 0, 1, "no_batching")
+        item.queued_at, item.started_at, item.completed_at = 1, 2, 3 + index
+        item.status = RequestStatus.COMPLETED
+        metrics.record(item)
+    metrics.rejected(queue_full=True, reason="queue_full")
+    assert len(metrics.latencies) == 2
+    snapshot = metrics.snapshot()
+    assert snapshot["metrics_sample_limit"] == 2
+    assert snapshot["rejections_by_reason"] == {"queue_full": 1}

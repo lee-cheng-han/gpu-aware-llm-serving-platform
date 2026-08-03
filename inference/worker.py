@@ -1,7 +1,6 @@
-from dataclasses import dataclass
-from threading import Lock
-from threading import Thread
 import time
+from dataclasses import dataclass
+from threading import Lock, Thread
 
 from inference.model_loader import load_model
 
@@ -16,12 +15,19 @@ class GenerationResult:
     decoding_ms: float = 0
 
 
+@dataclass
+class StreamChunk:
+    text: str
+    output_tokens: int
+
+
 class InferenceWorker:
     """Lazy CPU worker. Scheduler calls it through asyncio.to_thread."""
     def __init__(self, model_name: str):
         self.model_name = model_name
         self.tokenizer = self.model = None
         self._load_lock = Lock()
+        self._execution_lock = Lock()
         self.load_error: str | None = None
 
     def _ensure_loaded(self):
@@ -62,6 +68,10 @@ class InferenceWorker:
         return self.generate_batch([prompt], max_new_tokens, temperature)[0]
 
     def generate_batch(self, prompts: list[str], max_new_tokens: int, temperature: float) -> list[GenerationResult]:
+        with self._execution_lock:
+            return self._generate_batch(prompts, max_new_tokens, temperature)
+
+    def _generate_batch(self, prompts: list[str], max_new_tokens: int, temperature: float) -> list[GenerationResult]:
         import torch
         self._ensure_loaded()
         tokenization_started = time.perf_counter()
@@ -102,10 +112,26 @@ class InferenceWorker:
         return results
 
     def stream(self, prompt: str, max_new_tokens: int, temperature: float):
+        with self._execution_lock:
+            yield from self._stream_unlocked(prompt, max_new_tokens, temperature)
+
+    def _stream_unlocked(self, prompt: str, max_new_tokens: int, temperature: float):
         from transformers import TextIteratorStreamer
+
+        class CountingStreamer(TextIteratorStreamer):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.generated_tokens = 0
+
+            def put(self, value):
+                is_prompt = self.skip_prompt and self.next_tokens_are_prompt
+                if not is_prompt:
+                    self.generated_tokens += int(value.numel())
+                return super().put(value)
+
         self._ensure_loaded()
         encoded = self.tokenizer(prompt, return_tensors="pt")
-        streamer = TextIteratorStreamer(
+        streamer = CountingStreamer(
             self.tokenizer, skip_prompt=True, skip_special_tokens=True
         )
         kwargs = dict(
@@ -115,7 +141,23 @@ class InferenceWorker:
         )
         if temperature > 0:
             kwargs["temperature"] = temperature
-        thread = Thread(target=self.model.generate, kwargs=kwargs, daemon=True)
+        failures: list[BaseException] = []
+
+        def generate() -> None:
+            try:
+                self.model.generate(**kwargs)
+            except BaseException as exc:
+                failures.append(exc)
+                # generate() normally ends the streamer itself. On failure it
+                # may not, so wake the consumer explicitly.
+                streamer.end()
+
+        thread = Thread(target=generate, daemon=True)
         thread.start()
-        yield from streamer
-        thread.join()
+        try:
+            for text in streamer:
+                yield StreamChunk(text=text, output_tokens=streamer.generated_tokens)
+        finally:
+            thread.join()
+        if failures:
+            raise RuntimeError("streaming model generation failed") from failures[0]

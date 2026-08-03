@@ -1,15 +1,15 @@
 import asyncio
-from dataclasses import replace
 import time
+from dataclasses import replace
 
 import pytest
+from conftest import FakeWorker
 
 from app.metrics import Metrics
 from scheduler.no_batching import process_one
 from scheduler.queue import QueueClosed, RequestQueue
 from scheduler.request import InferenceRequest, RequestStatus
 from scheduler.scheduler_loop import run_scheduler
-from conftest import FakeWorker
 
 
 def make_request(prompt="hello"):

@@ -1,11 +1,13 @@
 import asyncio
-from dataclasses import replace
 import time
+from collections import deque
+from dataclasses import replace
+
+from conftest import FakeWorker
 
 from app.metrics import Metrics
 from scheduler.dynamic_batch import collect_batch, process_batch
 from scheduler.request import InferenceRequest, RequestStatus
-from conftest import FakeWorker
 
 
 def item(prompt="x"):
@@ -42,3 +44,19 @@ async def test_timeout_skipped_and_batch_recorded(settings):
     assert expired.status == RequestStatus.TIMEOUT
     assert batch[0].batch_size == 1
     assert metrics.snapshot()["avg_batch_size"] == 1
+
+
+async def test_collection_defers_incompatible_and_keeps_scanning(settings):
+    queue, deferred = asyncio.Queue(), deque()
+    incompatible = item("different")
+    incompatible.temperature = 0.5
+    compatible = item("compatible")
+    await queue.put(incompatible)
+    await queue.put(compatible)
+    first = item("first")
+    batch = await collect_batch(
+        queue, first, settings, Metrics(), deferred=deferred
+    )
+    assert [request.prompt for request in batch] == ["first", "compatible"]
+    assert [request.prompt for request in deferred] == ["different"]
+    queue.task_done()  # compatible remains owned by the collected batch

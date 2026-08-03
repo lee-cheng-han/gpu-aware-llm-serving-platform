@@ -13,6 +13,7 @@ spec:
       labels:
         app: llm-inference
     spec:
+      terminationGracePeriodSeconds: 40
       containers:
         - name: server
           image: llm-inference-scheduler:local

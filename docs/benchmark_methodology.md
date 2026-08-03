@@ -10,6 +10,11 @@ single-worker server with `SCHEDULER_POLICY=no_batching`, run the comparison scr
 restart with `dynamic_batch`; record `MAX_BATCH_SIZE`, `MAX_WAIT_MS`, and total token cap.
 Run several trials and retain raw JSON, not only the best run.
 
+The HTTP benchmark uses one pooled asynchronous client, a concurrency semaphore, seeded
+prompt generation, warm-up requests excluded from measurements, and explicit counts for
+completed requests, HTTP rejections, and transport failures. Use `--output` to retain raw
+per-request latency samples and the server configuration returned by `/metrics`.
+
 Measure client p50/p95 end-to-end latency, server queue wait, achieved requests and output
 tokens per second, queue-depth high-water mark, model invocation count, batch-size
 distribution, and average batch size. Keep validation tokenization, worker tokenization,

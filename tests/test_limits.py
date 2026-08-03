@@ -1,9 +1,11 @@
 from dataclasses import replace
+
 import httpx
+import pytest
+from conftest import FakeWorker
 
 from app.limits import ConcurrencyLimiter
 from app.main import create_app
-from conftest import FakeWorker
 
 
 async def post(app, body):
@@ -54,8 +56,7 @@ async def test_schema_errors_are_structured(settings):
 async def test_concurrency_limiter_rejects():
     limiter = ConcurrencyLimiter(1)
     async with limiter.slot():
-        try:
+        with pytest.raises(Exception) as captured:
             async with limiter.slot():
-                assert False
-        except Exception as exc:
-            assert exc.status_code == 429
+                pass
+        assert captured.value.status_code == 429

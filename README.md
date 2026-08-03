@@ -61,6 +61,8 @@ Configuration is read from the environment:
 | `MAX_BATCH_SIZE` / `MAX_WAIT_MS` | `8` / `25` |
 | `MAX_TOTAL_BATCH_TOKENS` | `1024` |
 | `MODEL_WARMUP_ON_START` | `false` |
+| `SHUTDOWN_GRACE_SECONDS` | `30` |
+| `METRICS_SAMPLE_LIMIT` | `10000` |
 
 ## API Usage
 
@@ -88,6 +90,12 @@ reports process health; `/ready` returns 200 only after the model has loaded. Se
 requested output tokens must fit the model's context window. Set `temperature` to `0`
 for deterministic greedy decoding.
 
+The SSE path reserves concurrency before response headers are sent, counts generated model
+tokens independently of decoded text fragments, and always releases admission on success,
+failure, or disconnect. Background model exceptions produce a structured SSE error followed
+by `done`. Disconnecting cannot preempt an already-running Hugging Face generation thread;
+its output is discarded when that local call eventually returns.
+
 ## Scheduler Design
 
 `no_batching` takes exactly one request and makes one model call. `dynamic_batch` takes a
@@ -101,9 +109,10 @@ disconnects, queued work is marked cancelled and skipped; running Hugging Face g
 still finishes because v1 cannot preempt it.
 
 Only requests with matching output length and temperature share a model call, preserving
-request semantics. Controlled benchmarks should still use uniform parameters. A production
-scheduler would maintain explicit compatibility buckets instead of stopping collection at
-the first incompatible FIFO candidate.
+request semantics. The collector moves incompatible candidates into a scheduler-owned
+deferred deque and continues scanning within the collection window, avoiding repeated queue
+reinsertion and reducing head-of-line blocking. Controlled benchmarks should still use
+uniform parameters.
 
 ## Metrics
 
@@ -112,7 +121,9 @@ TTFT, queue-wait percentiles, queue high-water mark, model invocation count, bat
 histogram, and average validation-tokenization, worker-tokenization, generation, decoding,
 and batch-collection times. It reports both process-lifetime and rolling 60-second request
 and token throughput. Cancelled requests remain separate from failures and timeouts.
-Metrics are in memory and reset on restart.
+Recent latency percentiles, rejection reasons, active model executions, and the configured
+sample limit are also exposed. Timing samples use bounded deques, so metrics memory does
+not grow without limit. Metrics reset on restart.
 
 ## Benchmark Methodology
 
@@ -134,6 +145,15 @@ python benchmark/compare_schedulers.py --policy dynamic_batch
 ```
 
 The client refuses to label results with a policy different from the server response.
+It reuses pooled HTTP connections, excludes configurable warm-up requests, runs repeated
+trials from a seeded prompt set, records every outcome, and can retain raw JSON:
+
+```bash
+python benchmark/compare_schedulers.py --policy dynamic_batch \
+  --trials 3 --warmup-requests 5 \
+  --output benchmark/results/dynamic_batch.json
+```
+
 See [the full methodology](docs/benchmark_methodology.md).
 
 ## Benchmark Results
@@ -167,3 +187,22 @@ streaming, CPU-only, and single-worker semantics.
 API keys, tenant-aware/Redis-backed limits, Prometheus/Grafana, multi-worker routing, GPU
 serving, real continuous batching, cancellation, sampling-parameter bucketing, and
 batched streaming are intentionally future work.
+
+## Development Checks
+
+```bash
+make install-dev
+make lint
+make typecheck
+make test
+```
+
+Normal tests never download a model. An explicit optional smoke test downloads and executes
+`sshleifer/tiny-gpt2`:
+
+```bash
+make test-model
+```
+
+GitHub Actions runs Python 3.11 tests, Ruff, selected mypy checks, compilation, and a
+non-pushing Docker build. The runtime remains local and uses no paid inference API.

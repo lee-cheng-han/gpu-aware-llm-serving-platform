@@ -19,3 +19,11 @@ def test_invalid_warmup_value_rejected(monkeypatch):
 def test_invalid_scheduler_policy_rejected():
     with pytest.raises(ValueError, match="SCHEDULER_POLICY"):
         replace(Settings(), scheduler_policy="unknown").validate()
+
+
+def test_shutdown_and_metrics_settings_parse(monkeypatch):
+    monkeypatch.setenv("SHUTDOWN_GRACE_SECONDS", "12.5")
+    monkeypatch.setenv("METRICS_SAMPLE_LIMIT", "500")
+    settings = Settings.from_env()
+    assert settings.shutdown_grace_seconds == 12.5
+    assert settings.metrics_sample_limit == 500

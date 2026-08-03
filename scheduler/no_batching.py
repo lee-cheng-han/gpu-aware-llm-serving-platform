@@ -1,5 +1,6 @@
 import asyncio
 import time
+
 from scheduler.request import RequestStatus
 
 
@@ -18,6 +19,7 @@ async def process_one(request, worker, settings, metrics):
     request.status, request.started_at, request.batch_size = RequestStatus.RUNNING, time.monotonic(), 1
     request.batch_collection_ms = 0
     metrics.record_model_invocation(batch_size=1, collection_ms=0)
+    metrics.model_execution_started()
     try:
         result = await asyncio.to_thread(
             worker.generate_one, request.prompt, request.max_new_tokens, request.temperature
@@ -38,5 +40,11 @@ async def process_one(request, worker, settings, metrics):
     except Exception as exc:
         request.status, request.error_message = RequestStatus.FAILED, str(exc)
         request.completed_at = time.monotonic()
+    except asyncio.CancelledError:
+        request.finish(RequestStatus.FAILED, "shutdown grace period expired")
+        metrics.record(request)
+        raise
+    finally:
+        metrics.model_execution_finished()
     metrics.record(request)
     request.finish(request.status, request.error_message)

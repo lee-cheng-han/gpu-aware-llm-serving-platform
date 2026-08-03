@@ -25,3 +25,8 @@ wait, batch collection, worker tokenization, the blocking `model.generate()` cal
 per-result decoding. The no-batching loop awaits each complete worker call before taking
 the next queue item, making it a genuinely serial reference rather than a concurrency
 configuration that happens to use batches of one.
+
+The inference worker also owns a process-local execution lock shared by single generation,
+batched generation, and SSE generation. This prevents streaming from overlapping scheduler
+model calls and keeps the one-worker CPU experiment honest. Incompatible batch candidates
+are held in a scheduler-owned deferred deque and reconsidered as future batch seeds.

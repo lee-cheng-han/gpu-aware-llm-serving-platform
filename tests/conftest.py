@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import pytest
 
 from app.config import Settings
+from inference.worker import StreamChunk
 
 
 @dataclass
@@ -24,6 +25,7 @@ class FakeWorker:
         self.is_ready = False
         self._context_window = context_window
         self.run_inline_for_tests = True
+        self.stream_inline_for_tests = True
 
     def warmup(self):
         self.is_ready = True
@@ -47,7 +49,7 @@ class FakeWorker:
         return [FakeResult(" generated", len(p.split()), max_new_tokens) for p in prompts]
 
     def stream(self, prompt, max_new_tokens, temperature):
-        yield " generated"
+        yield StreamChunk(" generated", 2)
 
 
 @pytest.fixture

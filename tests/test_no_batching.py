@@ -1,10 +1,11 @@
 import asyncio
 from dataclasses import replace
 
+from conftest import FakeWorker
+
 from app.metrics import Metrics
 from scheduler.no_batching import process_one
 from scheduler.request import InferenceRequest, RequestStatus
-from conftest import FakeWorker
 
 
 async def test_no_batching_processes_one(settings):

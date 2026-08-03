@@ -1,7 +1,7 @@
 import httpx
+from conftest import FakeWorker
 
 from app.main import create_app
-from conftest import FakeWorker
 
 
 async def test_successful_greedy_generation(settings):

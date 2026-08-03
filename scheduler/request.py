@@ -1,11 +1,11 @@
 import asyncio
-from dataclasses import dataclass, field
-from enum import Enum
 import time
 import uuid
+from dataclasses import dataclass, field
+from enum import StrEnum
 
 
-class RequestStatus(str, Enum):
+class RequestStatus(StrEnum):
     RECEIVED = "RECEIVED"
     QUEUED = "QUEUED"
     RUNNING = "RUNNING"

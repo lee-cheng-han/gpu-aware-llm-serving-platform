@@ -58,6 +58,22 @@ The SSE endpoint bypasses the batching queue and uses a Transformers streamer. B
 interleaved token streaming requires per-sequence stopping and substantially different
 scheduling. Batching benchmarks therefore use `/v1/generate`.
 
+Streaming admission is reserved before headers are returned, and released in generator
+cleanup on completion, failure, or client cancellation. A wrapper around the background
+generation thread explicitly ends the streamer on model failure so the consumer cannot
+wait forever. As with non-streaming inference, disconnecting does not preempt PyTorch;
+the daemon generation thread finishes locally and its remaining output is ignored.
+
+All inference paths share one model execution lock. A long stream can therefore delay
+queued non-streaming work; allowing overlap would confound the one-worker experiment and
+can oversubscribe CPU threads. Production systems would use explicit worker pools and
+tenant-aware routing rather than a process-local lock.
+
+Shutdown stops queue and stream admission, rejects deferred or queued requests, and waits
+up to `SHUTDOWN_GRACE_SECONDS`. If blocking PyTorch work outlives that grace period, request
+handles are failed and the scheduler task is cancelled, but the underlying Python thread
+cannot be safely killed. The process may still spend time terminating local compute.
+
 ## Why Kubernetes is deployment-only
 
 One replica preserves the single in-memory queue and worker. The manifests demonstrate
