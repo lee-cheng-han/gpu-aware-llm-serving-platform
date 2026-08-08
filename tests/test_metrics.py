@@ -1,6 +1,6 @@
 import pytest
 
-from app.metrics import Metrics, percentile
+from apps.gateway.metrics import Metrics, percentile
 from scheduler.request import InferenceRequest, RequestStatus
 
 

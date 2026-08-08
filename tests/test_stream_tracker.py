@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from app.limits import StreamTracker
+from apps.gateway.limits import StreamTracker
 
 
 async def test_stream_tracker_waits_and_closes_admission():

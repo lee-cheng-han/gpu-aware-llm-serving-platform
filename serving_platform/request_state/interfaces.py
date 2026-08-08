@@ -1,0 +1,9 @@
+from typing import Protocol
+
+from serving_platform.domain import RequestRecord
+
+
+class RequestStateStore(Protocol):
+    def create(self, request: RequestRecord) -> None: ...
+    def get(self, request_id: str) -> RequestRecord | None: ...
+    def save(self, request: RequestRecord) -> None: ...

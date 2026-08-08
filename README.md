@@ -41,7 +41,7 @@ See [architecture details](docs/architecture.md).
 
 ## Quick Start
 
-Python 3.11 is recommended.
+Python 3.12 is the supported platform target.
 
 ```bash
 make install
@@ -54,6 +54,7 @@ Configuration is read from the environment:
 | Variable | Default |
 |---|---:|
 | `MODEL_NAME` | `sshleifer/tiny-gpt2` |
+| `MODEL_REVISION` | `main` |
 | `SCHEDULER_POLICY` | `no_batching` |
 | `MAX_PROMPT_TOKENS` / `MAX_NEW_TOKENS` | `1024` / `128` |
 | `MAX_QUEUE_SIZE` / `MAX_CONCURRENT_REQUESTS` | `128` / `16` |
@@ -110,9 +111,11 @@ still finishes because v1 cannot preempt it.
 
 Only requests with matching output length and temperature share a model call, preserving
 request semantics. The collector moves incompatible candidates into a scheduler-owned
-deferred deque and continues scanning within the collection window, avoiding repeated queue
-reinsertion and reducing head-of-line blocking. Controlled benchmarks should still use
-uniform parameters.
+deferred deque, reuses compatible deferred work before waiting for new arrivals, and scans
+each deferred item at most once per collection. This avoids repeated queue reinsertion,
+reduces head-of-line blocking, and prevents a busy loop. Queue task accounting remains tied
+to completion of the shared model call. Controlled benchmarks should still use uniform
+parameters.
 
 ## Metrics
 
@@ -204,5 +207,5 @@ Normal tests never download a model. An explicit optional smoke test downloads a
 make test-model
 ```
 
-GitHub Actions runs Python 3.11 tests, Ruff, selected mypy checks, compilation, and a
+GitHub Actions runs Python 3.12 tests, Ruff, selected mypy checks, compilation, and a
 non-pushing Docker build. The runtime remains local and uses no paid inference API.

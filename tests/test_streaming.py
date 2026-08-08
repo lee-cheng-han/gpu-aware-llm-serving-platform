@@ -7,9 +7,9 @@ import pytest
 from conftest import FakeWorker
 from starlette.requests import Request
 
-from app.api import generate_stream
-from app.main import create_app
-from app.schemas import GenerateRequest
+from apps.gateway.api import generate_stream
+from apps.gateway.main import create_app
+from apps.gateway.schemas import GenerateRequest
 from inference.worker import StreamChunk
 
 

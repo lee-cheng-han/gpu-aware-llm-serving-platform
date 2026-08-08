@@ -1,7 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from app.errors import APIError
+from apps.gateway.errors import APIError
 
 
 class ConcurrencyLimiter:

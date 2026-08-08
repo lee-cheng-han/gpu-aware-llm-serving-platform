@@ -3,7 +3,7 @@ from dataclasses import replace
 
 from conftest import FakeWorker
 
-from app.metrics import Metrics
+from apps.gateway.metrics import Metrics
 from scheduler.no_batching import process_one
 from scheduler.request import InferenceRequest, RequestStatus
 

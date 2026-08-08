@@ -7,10 +7,10 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.api import router
-from app.config import Settings
-from app.limits import ConcurrencyLimiter, StreamTracker
-from app.metrics import Metrics
+from apps.gateway.api import router
+from apps.gateway.config import Settings
+from apps.gateway.limits import ConcurrencyLimiter, StreamTracker
+from apps.gateway.metrics import Metrics
 from inference.worker import InferenceWorker
 from scheduler.queue import RequestQueue
 from scheduler.scheduler_loop import run_scheduler
@@ -49,7 +49,9 @@ def create_app(settings: Settings | None = None, worker=None) -> FastAPI:
 
     app = FastAPI(title="LLM Inference Scheduler", version="1.0.0", lifespan=lifespan)
     app.state.settings = settings
-    app.state.worker = worker or InferenceWorker(settings.model_name)
+    app.state.worker = worker or InferenceWorker(
+        settings.model_name, settings.model_revision
+    )
     app.state.metrics = Metrics(settings.metrics_sample_limit)
     app.state.request_queue = RequestQueue(settings.max_queue_size)
     app.state.limiter = ConcurrencyLimiter(settings.max_concurrent_requests)

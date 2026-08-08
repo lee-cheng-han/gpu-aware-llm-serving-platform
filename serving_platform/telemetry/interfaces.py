@@ -1,0 +1,9 @@
+from typing import Protocol
+
+from serving_platform.domain import RequestRecord, WorkerState
+
+
+class TelemetrySink(Protocol):
+    def request_transition(self, request: RequestRecord) -> None: ...
+    def worker_snapshot(self, worker: WorkerState) -> None: ...
+    def routing_decision(self, policy: str, elapsed_seconds: float) -> None: ...

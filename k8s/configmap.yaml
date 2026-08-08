@@ -5,6 +5,7 @@ metadata:
   namespace: llm-inference
 data:
   MODEL_NAME: sshleifer/tiny-gpt2
+  MODEL_REVISION: main
   SCHEDULER_POLICY: dynamic_batch
   MAX_PROMPT_TOKENS: "1024"
   MAX_NEW_TOKENS: "128"

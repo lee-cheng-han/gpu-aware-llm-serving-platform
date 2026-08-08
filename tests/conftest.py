@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from app.config import Settings
+from apps.gateway.config import Settings
 from inference.worker import StreamChunk
 
 

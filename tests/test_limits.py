@@ -4,8 +4,8 @@ import httpx
 import pytest
 from conftest import FakeWorker
 
-from app.limits import ConcurrencyLimiter
-from app.main import create_app
+from apps.gateway.limits import ConcurrencyLimiter
+from apps.gateway.main import create_app
 
 
 async def post(app, body):

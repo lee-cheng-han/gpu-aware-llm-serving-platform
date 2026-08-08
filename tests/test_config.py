@@ -2,7 +2,7 @@ from dataclasses import replace
 
 import pytest
 
-from app.config import Settings
+from apps.gateway.config import Settings
 
 
 def test_settings_parse_warmup(monkeypatch):

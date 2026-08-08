@@ -1,7 +1,8 @@
 import httpx
 from conftest import FakeWorker
 
-from app.main import create_app
+from apps.gateway import create_app as gateway_create_app
+from apps.gateway.main import create_app
 
 
 async def test_health(settings):
@@ -11,6 +12,10 @@ async def test_health(settings):
         response = await client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_gateway_package_exports_application_factory():
+    assert gateway_create_app is create_app
 
 
 async def test_readiness_distinguishes_unloaded_model(settings):

@@ -5,9 +5,9 @@ import time
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from app.errors import APIError
-from app.limits import validate_request
-from app.schemas import GenerateRequest, GenerateResponse, ReadinessResponse
+from apps.gateway.errors import APIError
+from apps.gateway.limits import validate_request
+from apps.gateway.schemas import GenerateRequest, GenerateResponse, ReadinessResponse
 from scheduler.queue import QueueClosed
 from scheduler.request import InferenceRequest, RequestStatus
 
@@ -95,6 +95,8 @@ async def generate(body: GenerateRequest, request: Request):
             try:
                 # Shield keeps client cancellation from cancelling the scheduler's
                 # result handle. Queued cancellations can then be skipped safely.
+                if item.future is None:
+                    raise RuntimeError("request queue did not create a result future")
                 result = await asyncio.shield(item.future)
             except asyncio.CancelledError:
                 item.cancel("client disconnected")
@@ -215,6 +217,7 @@ async def metrics(request: Request):
     )
     snapshot.update({
         "model_name": state.settings.model_name,
+        "model_revision": state.settings.model_revision,
         "scheduler_policy": state.settings.scheduler_policy,
         "max_batch_size": state.settings.max_batch_size,
         "max_wait_ms": state.settings.max_wait_ms,

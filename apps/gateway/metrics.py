@@ -1,9 +1,10 @@
 import time
 from collections import Counter, deque
+from collections.abc import Sequence
 from threading import Lock
 
 
-def percentile(values: list[float], p: float) -> float:
+def percentile(values: Sequence[float], p: float) -> float:
     if not values:
         return 0.0
     ordered = sorted(values)

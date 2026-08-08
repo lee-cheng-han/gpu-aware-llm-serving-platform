@@ -24,6 +24,7 @@ class Settings:
     host: str = "0.0.0.0"
     port: int = 8000
     model_name: str = "sshleifer/tiny-gpt2"
+    model_revision: str = "main"
     scheduler_policy: str = "no_batching"
     max_prompt_tokens: int = 1024
     max_new_tokens: int = 128
@@ -43,6 +44,7 @@ class Settings:
             host=_env("HOST", "0.0.0.0", str),
             port=_env("PORT", 8000, int),
             model_name=_env("MODEL_NAME", "sshleifer/tiny-gpt2", str),
+            model_revision=_env("MODEL_REVISION", "main", str),
             scheduler_policy=_env("SCHEDULER_POLICY", "no_batching", str),
             max_prompt_tokens=_env("MAX_PROMPT_TOKENS", 1024, int),
             max_new_tokens=_env("MAX_NEW_TOKENS", 128, int),

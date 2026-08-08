@@ -4,7 +4,7 @@ install:
 install-dev:
 	python -m pip install -r requirements-dev.txt
 run:
-	uvicorn app.main:app --host 0.0.0.0 --port 8000
+	uvicorn apps.gateway.main:app --host 0.0.0.0 --port 8000
 test:
 	pytest -q
 test-model:
