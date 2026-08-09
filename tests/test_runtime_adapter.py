@@ -1,8 +1,10 @@
+from types import SimpleNamespace
+
 import pytest
 from conftest import FakeWorker
 
 from runtime.huggingface import HuggingFaceRuntime
-from serving_platform.domain import ModelDefinition, RuntimeType
+from serving_platform.domain import DeviceType, ModelDefinition, RuntimeType
 
 
 def definition() -> ModelDefinition:
@@ -35,3 +37,36 @@ def test_huggingface_adapter_rejects_unregistered_model_before_loading():
     runtime = HuggingFaceRuntime(definition(), worker=FakeWorker())
     with pytest.raises(ValueError, match="not registered"):
         runtime.count_prompt_tokens("arbitrary/path", "hello")
+
+
+def test_cuda_capacity_uses_pytorch_device_apis(monkeypatch):
+    fake_cuda = SimpleNamespace(
+        is_available=lambda: True,
+        mem_get_info=lambda index: (6_000, 8_000),
+        get_device_name=lambda index: f"fake-cuda-{index}",
+    )
+    monkeypatch.setattr(
+        "runtime.huggingface.runtime.import_module",
+        lambda name: SimpleNamespace(cuda=fake_cuda),
+    )
+    runtime = HuggingFaceRuntime(
+        definition(), worker=FakeWorker(), device_type=DeviceType.CUDA, cuda_device_index=2
+    )
+
+    capacity = runtime.capacity()
+    assert capacity.device_name == "fake-cuda-2"
+    assert capacity.total_memory_bytes == 8_000
+    assert capacity.available_memory_bytes == 6_000
+
+
+def test_cuda_capacity_fails_when_cuda_is_unavailable(monkeypatch):
+    fake_cuda = SimpleNamespace(is_available=lambda: False)
+    monkeypatch.setattr(
+        "runtime.huggingface.runtime.import_module",
+        lambda name: SimpleNamespace(cuda=fake_cuda),
+    )
+    runtime = HuggingFaceRuntime(
+        definition(), worker=FakeWorker(), device_type=DeviceType.CUDA
+    )
+    with pytest.raises(RuntimeError, match="CUDA is unavailable"):
+        runtime.capacity()

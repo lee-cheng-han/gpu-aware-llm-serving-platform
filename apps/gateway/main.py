@@ -47,7 +47,7 @@ def create_app(settings: Settings | None = None, worker=None) -> FastAPI:
             with suppress(asyncio.CancelledError):
                 await task
 
-    app = FastAPI(title="LLM Inference Scheduler", version="1.0.0", lifespan=lifespan)
+    app = FastAPI(title="GPU-Aware LLM Serving Platform", version="1.0.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.worker = worker or InferenceWorker(
         settings.model_name, settings.model_revision

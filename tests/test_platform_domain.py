@@ -101,6 +101,17 @@ def test_worker_memory_invariant():
     assert worker.available_memory_bytes <= worker.total_memory_bytes
 
 
+def test_worker_allows_explicitly_unknown_cpu_memory():
+    worker = WorkerState(
+        worker_id="cpu-worker",
+        device_type=DeviceType.CPU,
+        device_name="cpu",
+        total_memory_bytes=None,
+        available_memory_bytes=None,
+    )
+    assert worker.available_memory_bytes is None
+
+
 def test_model_default_dtype_must_be_supported():
     definition = model_definition()
     assert definition.default_dtype == "float32"

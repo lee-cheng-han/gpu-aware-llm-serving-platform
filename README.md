@@ -1,4 +1,4 @@
-# LLM Inference Scheduler with Dynamic Micro-Batching
+# GPU-Aware LLM Serving Platform
 
 ## Overview
 
@@ -16,11 +16,14 @@ The deep axis is queueing and scheduling—not chatbot product features.
 - Cancellation-aware request futures and graceful queue shutdown
 - Single-request SSE streaming and JSON metrics
 - Repeatable benchmark clients, Docker, and one-pod kind manifests
+- Typed CPU/CUDA worker abstractions, deterministic simulated GPU execution, and an
+  in-memory heartbeat-aware worker registry
 
 ## What This Project Is Not
 
 - Not “mini-vLLM,” PagedAttention, continuous batching, or a vLLM/TGI/Triton replacement
-- Not GPU, multi-worker, multi-model, distributed, production-scale, or multi-tenant
+- The gateway is not yet multi-worker, multi-model, distributed, production-scale, or
+  multi-tenant; simulated GPU results are never real-device measurements
 - Not batched interleaved streaming or a custom KV-cache implementation
 
 This project is not a replacement for vLLM, TGI, or Triton. It does not implement
@@ -172,8 +175,8 @@ model, hardware, and settings.
 ## Docker
 
 ```bash
-docker build -t llm-inference-scheduler:local .
-docker run --rm -p 8000:8000 llm-inference-scheduler:local
+docker build -t gpu-aware-llm-serving-platform:local .
+docker run --rm -p 8000:8000 gpu-aware-llm-serving-platform:local
 ```
 
 ## Kubernetes

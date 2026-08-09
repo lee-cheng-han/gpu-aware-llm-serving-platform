@@ -2,7 +2,8 @@
 
 ## Current executable architecture
 
-Phase 1 deliberately preserves the proven single-worker path:
+The gateway deliberately preserves the proven single-worker path while the worker layer is
+introduced behind tested interfaces:
 
 ```text
 Client
@@ -32,19 +33,19 @@ calls.
 This remains a modular monolith. There is no global scheduler or multi-worker routing in
 the executable request path yet.
 
-## Phase 1 module boundaries
+## Worker-ready module boundaries
 
 ```text
 apps/
   gateway/             stable FastAPI entry point
-  control_plane/       process boundary reserved for Phase 2+
-  worker/              process boundary reserved for Phase 2+
+  control_plane/       future global scheduler process boundary
+  worker/              managed worker lifecycle and device-specific workers
 
 serving_platform/       (`platform` would shadow Python's standard-library module)
   domain/              typed models and request state machine data
   admission/           admission contract
   lifecycle/           validated transition service
-  registry/            worker and model registry contracts
+  registry/            worker registry contract and in-memory implementation
   request_state/       request-state persistence contract
   routing/             routing policy and explanation contract
   scheduling/          local scheduler contract
@@ -52,7 +53,8 @@ serving_platform/       (`platform` would shadow Python's standard-library modul
 
 runtime/
   base/                model runtime contract and result types
-  huggingface/         adapter around the existing CPU worker
+  huggingface/         CPU/CUDA adapter around the existing worker
+  simulated_gpu/       deterministic, explicitly simulated device runtime
 ```
 
 Interfaces point inward toward framework-independent domain types. FastAPI and Pydantic
@@ -83,9 +85,12 @@ loop.
 
 ## State and process boundaries
 
-Today all state is in one process and is lost on restart. Phase 1 defines storage and
-registry contracts but does not claim persistence. Worker processes, heartbeats, CUDA
-capacity, simulated GPUs, and routing policies begin in Phase 2 and Phase 3.
+Today all state is in one process and is lost on restart. Workers now register and publish
+health, queue, active-batch, residency, throughput, drain, and capacity snapshots. Stale
+heartbeats are marked unhealthy, and recovery requires re-registration. CUDA capacity uses
+PyTorch device APIs when CUDA is available; the deterministic simulated runtime models
+memory, load delay, throughput, batching efficiency, and controlled failures without
+claiming real inference. Global routing remains the next activation step.
 
 See [the Phase 1 audit and migration plan](phase1_migration_plan.md) for the reuse map and
 activation sequence.

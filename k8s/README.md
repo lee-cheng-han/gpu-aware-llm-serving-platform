@@ -5,8 +5,8 @@ replica so there is one queue, scheduler, metrics store, and model.
 
 ```bash
 kind create cluster --name llm-inference
-docker build -t llm-inference-scheduler:local .
-kind load docker-image llm-inference-scheduler:local --name llm-inference
+docker build -t gpu-aware-llm-serving-platform:local .
+kind load docker-image gpu-aware-llm-serving-platform:local --name llm-inference
 kubectl apply -f k8s/
 kubectl port-forward -n llm-inference svc/llm-inference 8000:8000
 curl http://localhost:8000/health

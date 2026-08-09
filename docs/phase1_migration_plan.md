@@ -69,7 +69,10 @@ in-memory worker registry, registration, heartbeat, capacity, drain, and shutdow
 ### Phase 3 — global scheduling
 
 Place a control-plane scheduler between gateway and local workers. Implement filtering,
-round robin, least queue depth, and structured routing explanations.
+round robin, least queue depth, and structured routing explanations. Connect the managed
+worker queue to the existing local batching scheduler, add the executable worker entry
+point, and supervise queue-consumer tasks with structured concurrency before enabling the
+multi-worker gateway path.
 
 ### Phase 4 — placement
 
@@ -89,12 +92,30 @@ admission quotas, fairness, global cancellation, and deadline checks.
 ### Phase 7 — reliability and persistence
 
 Add heartbeat expiry, failed-worker reassignment rules, persistent request metadata, worker
-draining, and explicit recovery paths.
+draining, and explicit recovery paths. Add an automatically supervised heartbeat monitor
+and ensure background-task failures propagate to process health.
 
 ### Phase 8 — evaluation
 
 Build heterogeneous workload definitions, simulated and real-device runners, reports, and
 graphs. Results remain empty until measurements are actually run.
+
+## Improvement backlog integration
+
+The post-Phase-2 review is incorporated into the sequence rather than maintained as a
+separate wishlist:
+
+- Completed foundation/worker hardening: preserve unknown CPU memory instead of reporting
+  zero capacity; keep slow warmup and unload calls outside worker state locks; enforce
+  simulator context and batch limits; test CUDA selection primitives without GPU hardware;
+  and align project identity with the GPU-aware serving platform.
+- Phase 3: execute managed queues through local batching, add worker-process configuration,
+  expand execution/accounting tests, and supervise worker tasks as a unit.
+- Phase 4: add routing tests for unknown CPU capacity and mocked CUDA memory pressure.
+- Phase 5: coalesce duplicate loads and add safe memory reservations so load/unload races do
+  not depend only on local worker locking.
+- Phase 7: run heartbeat expiry periodically, test shutdown during execution, and make task
+  and process failure semantics explicit.
 
 ## Compatibility rules
 

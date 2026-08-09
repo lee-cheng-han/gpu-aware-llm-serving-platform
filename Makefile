@@ -14,9 +14,9 @@ lint:
 typecheck:
 	mypy
 docker-build:
-	docker build -t llm-inference-scheduler:local .
+	docker build -t gpu-aware-llm-serving-platform:local .
 docker-run:
-	docker run --rm -p 8000:8000 llm-inference-scheduler:local
+	docker run --rm -p 8000:8000 gpu-aware-llm-serving-platform:local
 benchmark-sanity:
 	python benchmark/sanity_model_benchmark.py --models sshleifer/tiny-gpt2 gpt2
 benchmark-no-batching:

@@ -1,4 +1,4 @@
-def load_model(model_name: str, revision: str = "main"):
+def load_model(model_name: str, revision: str = "main", device: str = "cpu"):
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -7,6 +7,6 @@ def load_model(model_name: str, revision: str = "main"):
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"
     model = AutoModelForCausalLM.from_pretrained(model_name, revision=revision)
-    model.to(torch.device("cpu"))
+    model.to(torch.device(device))
     model.eval()
     return tokenizer, model

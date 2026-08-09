@@ -1,7 +1,7 @@
 [project]
-name = "llm-inference-scheduler"
+name = "gpu-aware-llm-serving-platform"
 version = "0.1.0"
-description = "Local CPU LLM scheduling and dynamic micro-batching study"
+description = "GPU-aware LLM serving control plane with local dynamic batching"
 requires-python = ">=3.12,<3.13"
 
 [tool.ruff]
@@ -17,7 +17,13 @@ python_version = "3.12"
 check_untyped_defs = true
 no_implicit_optional = true
 warn_unused_ignores = true
-files = ["apps/gateway/config.py", "scheduler/request.py", "serving_platform", "runtime"]
+files = [
+    "apps/gateway/config.py",
+    "apps/worker",
+    "scheduler/request.py",
+    "serving_platform",
+    "runtime",
+]
 
 [[tool.mypy.overrides]]
 module = ["inference.*"]

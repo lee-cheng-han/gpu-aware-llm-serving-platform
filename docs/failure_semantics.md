@@ -12,9 +12,19 @@
 - Shutdown stops admission, rejects queued and deferred requests, and waits for active work
   up to the configured grace period.
 
-## Not implemented in Phase 1
+## Worker-layer behavior
 
-There is no worker heartbeat, crash reassignment, model-load reservation, persistent request
-state, or control-plane recovery yet. Those semantics must be implemented and tested before
+- Workers that exceed the configured heartbeat timeout are marked unhealthy and cannot
+  resume by sending a heartbeat; they must explicitly re-register.
+- Draining workers reject new requests and model loads. Shutdown fails queued work, unloads
+  resident models, and unregisters the worker.
+- Simulated GPU failures are deterministic when a failure interval is configured. They are
+  test behavior and are never presented as real CUDA failures.
+- CUDA construction fails clearly when PyTorch does not report an available CUDA device.
+
+## Not implemented yet
+
+There is no crash reassignment, model-load reservation, persistent request state, or
+control-plane recovery yet. Those semantics must be implemented and tested before
 multi-worker mode is advertised. Partially streamed requests will never be retried
 automatically.

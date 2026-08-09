@@ -16,7 +16,7 @@ spec:
       terminationGracePeriodSeconds: 40
       containers:
         - name: server
-          image: llm-inference-scheduler:local
+          image: gpu-aware-llm-serving-platform:local
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:

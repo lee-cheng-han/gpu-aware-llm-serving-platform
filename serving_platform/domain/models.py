@@ -133,8 +133,8 @@ class WorkerState:
     worker_id: str
     device_type: DeviceType
     device_name: str
-    total_memory_bytes: int
-    available_memory_bytes: int
+    total_memory_bytes: int | None
+    available_memory_bytes: int | None
     resident_models: set[str] = field(default_factory=set)
     loading_models: set[str] = field(default_factory=set)
     queue_depth: int = 0
@@ -148,8 +148,11 @@ class WorkerState:
     def __post_init__(self) -> None:
         if not self.worker_id:
             raise ValueError("worker_id is required")
-        if self.total_memory_bytes < 0 or not 0 <= self.available_memory_bytes <= self.total_memory_bytes:
-            raise ValueError("worker memory accounting is invalid")
+        if (self.total_memory_bytes is None) != (self.available_memory_bytes is None):
+            raise ValueError("worker memory values must both be known or both be unknown")
+        if self.total_memory_bytes is not None and self.available_memory_bytes is not None:
+            if self.total_memory_bytes < 0 or not 0 <= self.available_memory_bytes <= self.total_memory_bytes:
+                raise ValueError("worker memory accounting is invalid")
         if min(self.queue_depth, self.active_batch_count) < 0 or self.max_concurrency <= 0:
             raise ValueError("worker queue and concurrency values are invalid")
 

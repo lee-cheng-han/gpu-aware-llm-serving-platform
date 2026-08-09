@@ -18,7 +18,7 @@ jobs:
       - run: ruff check .
       - run: mypy
       - run: pytest -m "not model" -q
-      - run: python -m compileall -q app inference scheduler benchmark tests
+      - run: python -m compileall -q apps inference runtime scheduler serving_platform benchmark tests
 
   docker:
     runs-on: ubuntu-latest
@@ -29,4 +29,4 @@ jobs:
         with:
           context: .
           push: false
-          tags: llm-inference-scheduler:ci
+          tags: gpu-aware-llm-serving-platform:ci
