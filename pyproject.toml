@@ -19,6 +19,7 @@ no_implicit_optional = true
 warn_unused_ignores = true
 files = [
     "apps/gateway/config.py",
+    "apps/control_plane",
     "apps/worker",
     "scheduler/request.py",
     "serving_platform",

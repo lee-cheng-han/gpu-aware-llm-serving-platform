@@ -1,1 +1,10 @@
-"""Control-plane package; global routing is introduced in Phase 3."""
+from apps.control_plane.scheduler import GlobalScheduler, RequestDeadlineExceeded
+from apps.control_plane.service import ControlPlane, WorkerDirectory, WorkerDispatchError
+
+__all__ = [
+    "ControlPlane",
+    "GlobalScheduler",
+    "RequestDeadlineExceeded",
+    "WorkerDirectory",
+    "WorkerDispatchError",
+]

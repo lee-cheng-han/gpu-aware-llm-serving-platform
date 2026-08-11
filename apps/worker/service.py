@@ -3,11 +3,12 @@ from __future__ import annotations
 import time
 from collections import deque
 from collections.abc import Callable
+from dataclasses import dataclass
 from importlib import import_module
 from threading import RLock
 from typing import Protocol
 
-from runtime.base import ModelRuntime, RuntimeCapacity
+from runtime.base import ModelRuntime, RuntimeCapacity, RuntimeResult
 from runtime.huggingface import HuggingFaceRuntime
 from serving_platform.domain import (
     DeviceType,
@@ -28,10 +29,17 @@ class Worker(Protocol):
     def warmup_model(self, model_id: str) -> None: ...
     def enqueue_request(self, request: RequestRecord) -> None: ...
     def cancel_request(self, request_id: str) -> bool: ...
+    def execute_batch(self) -> tuple[WorkerExecutionResult, ...]: ...
     def drain(self) -> None: ...
     def shutdown(self) -> None: ...
     def health(self) -> HealthStatus: ...
     def capacity(self) -> RuntimeCapacity: ...
+
+
+@dataclass(frozen=True)
+class WorkerExecutionResult:
+    request_id: str
+    result: RuntimeResult
 
 
 class ManagedWorker:
@@ -44,15 +52,21 @@ class ManagedWorker:
         registry: WorkerRegistry,
         max_queue_depth: int = 128,
         max_concurrency: int = 1,
+        max_batch_size: int = 8,
+        max_batch_tokens: int = 4096,
         clock: Callable[[], float] = time.monotonic,
     ):
-        if not worker_id or min(max_queue_depth, max_concurrency) <= 0:
+        if not worker_id or min(
+            max_queue_depth, max_concurrency, max_batch_size, max_batch_tokens
+        ) <= 0:
             raise ValueError("worker id, queue depth, and concurrency must be positive")
         self.worker_id = worker_id
         self.runtime = runtime
         self.registry = registry
         self.max_queue_depth = max_queue_depth
         self.max_concurrency = max_concurrency
+        self.max_batch_size = max_batch_size
+        self.max_batch_tokens = max_batch_tokens
         self._clock = clock
         self._health = HealthStatus.REGISTERING
         self._draining = False
@@ -142,6 +156,8 @@ class ManagedWorker:
                 raise RuntimeError("request model is not resident")
             if len(self._queue) >= self.max_queue_depth:
                 raise OverflowError("worker queue is full")
+            if request.estimated_tokens > self.max_batch_tokens:
+                raise OverflowError("request exceeds the worker batch token budget")
             if request.status != RequestState.ASSIGNED:
                 raise ValueError("only assigned requests can enter a worker queue")
             request.transition(RequestState.QUEUED)
@@ -155,6 +171,79 @@ class ManagedWorker:
                     request.transition(RequestState.CANCELLED)
                     return True
         return False
+
+    def execute_batch(self) -> tuple[WorkerExecutionResult, ...]:
+        """Execute one compatible local batch; blocking runtime work happens unlocked."""
+        with self._lock:
+            now = self._clock()
+            while self._queue and (
+                self._queue[0].terminal or self._queue[0].deadline <= now
+            ):
+                skipped = self._queue.popleft()
+                if not skipped.terminal:
+                    skipped.transition(RequestState.TIMED_OUT, now)
+            if not self._queue:
+                return ()
+            first = self._queue.popleft()
+            selected = [first]
+            deferred: deque[RequestRecord] = deque()
+            batch_tokens = first.estimated_tokens
+            while self._queue and len(selected) < self.max_batch_size:
+                candidate = self._queue.popleft()
+                if candidate.terminal:
+                    continue
+                if candidate.deadline <= now:
+                    candidate.transition(RequestState.TIMED_OUT, now)
+                    continue
+                compatible = (
+                    candidate.model_id == first.model_id
+                    and candidate.max_new_tokens == first.max_new_tokens
+                    and candidate.temperature == first.temperature
+                    and candidate.stream == first.stream
+                )
+                if compatible and batch_tokens + candidate.estimated_tokens <= self.max_batch_tokens:
+                    selected.append(candidate)
+                    batch_tokens += candidate.estimated_tokens
+                else:
+                    deferred.append(candidate)
+            self._queue.extendleft(reversed(deferred))
+            for request in selected:
+                request.transition(RequestState.RUNNING, now)
+            self._active_batch_count += 1
+
+        started = time.perf_counter()
+        try:
+            if first.stream:
+                raise RuntimeError("streaming requests require the streaming worker path")
+            results = self.runtime.generate(
+                first.model_id,
+                [request.prompt for request in selected],
+                first.max_new_tokens,
+                first.temperature,
+            )
+            if len(results) != len(selected):
+                raise RuntimeError("runtime returned an unexpected result count")
+        except BaseException:
+            finished = self._clock()
+            with self._lock:
+                for request in selected:
+                    request.transition(RequestState.FAILED, finished)
+            raise
+        finally:
+            with self._lock:
+                self._active_batch_count -= 1
+
+        elapsed = max(time.perf_counter() - started, 1e-9)
+        with self._lock:
+            for request in selected:
+                request.transition(RequestState.COMPLETED, self._clock())
+            self._recent_tokens_per_second = sum(
+                result.output_tokens for result in results
+            ) / elapsed
+        return tuple(
+            WorkerExecutionResult(request.request_id, result)
+            for request, result in zip(selected, results, strict=True)
+        )
 
     def drain(self) -> None:
         with self._lock:

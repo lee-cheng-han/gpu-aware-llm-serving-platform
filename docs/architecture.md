@@ -30,15 +30,16 @@ queue insertion. Blocking model calls run outside the event loop. Streaming and 
 generation share one execution lock, so the one-worker experiment never overlaps model
 calls.
 
-This remains a modular monolith. There is no global scheduler or multi-worker routing in
-the executable request path yet.
+This remains a modular monolith. Global scheduling and multi-worker dispatch are executable
+as control-plane components, but the public FastAPI routes intentionally remain on the
+proven single-worker path until admission, tenant identity, and model lifecycle are wired.
 
 ## Worker-ready module boundaries
 
 ```text
 apps/
   gateway/             stable FastAPI entry point
-  control_plane/       future global scheduler process boundary
+  control_plane/       global assignment and process-local worker dispatch
   worker/              managed worker lifecycle and device-specific workers
 
 serving_platform/       (`platform` would shadow Python's standard-library module)
@@ -61,9 +62,9 @@ Interfaces point inward toward framework-independent domain types. FastAPI and P
 remain API-boundary concerns. The Hugging Face adapter refuses model identifiers other
 than its registered model before loading, preventing arbitrary user-controlled model paths.
 
-## Target two-level request flow
+## Two-level control-plane flow
 
-Later phases will incrementally activate this path:
+The platform layer now executes this flow in deterministic integration tests:
 
 ```text
 gateway -> authentication -> admission -> global scheduler
@@ -78,7 +79,7 @@ gateway -> authentication -> admission -> global scheduler
                                 model runtime
 ```
 
-The global scheduler will select a worker; it will not form model batches. Each worker
+The global scheduler selects a worker; it does not form model batches. Each worker
 retains its own bounded queue and local scheduler. This separation lets placement account
 for health, memory, residency, and load without turning global routing into a token decoding
 loop.
@@ -90,7 +91,9 @@ health, queue, active-batch, residency, throughput, drain, and capacity snapshot
 heartbeats are marked unhealthy, and recovery requires re-registration. CUDA capacity uses
 PyTorch device APIs when CUDA is available; the deterministic simulated runtime models
 memory, load delay, throughput, batching efficiency, and controlled failures without
-claiming real inference. Global routing remains the next activation step.
+claiming real inference. Round-robin and least-queue global policies now filter worker
+health, drain state, concurrency, and model residency and return structured explanations.
+Worker applications supervise heartbeats and local execution together with `TaskGroup`.
 
 See [the Phase 1 audit and migration plan](phase1_migration_plan.md) for the reuse map and
 activation sequence.

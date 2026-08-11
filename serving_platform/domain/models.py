@@ -68,6 +68,7 @@ ALLOWED_REQUEST_TRANSITIONS: dict[RequestState, frozenset[RequestState]] = {
     }),
     RequestState.QUEUED: frozenset({
         RequestState.ASSIGNED,
+        RequestState.RUNNING,
         RequestState.TIMED_OUT,
         RequestState.CANCELLED,
         RequestState.FAILED,
@@ -168,6 +169,7 @@ class RequestRecord:
     priority: int
     deadline: float
     stream: bool
+    temperature: float = 0.0
     created_at: float = field(default_factory=time.monotonic)
     status: RequestState = RequestState.RECEIVED
     assigned_worker_id: str | None = None
@@ -177,7 +179,12 @@ class RequestRecord:
     def __post_init__(self) -> None:
         if not all((self.request_id, self.tenant_id, self.model_id)):
             raise ValueError("request, tenant, and model identifiers are required")
-        if not self.prompt.strip() or self.prompt_tokens < 0 or self.max_new_tokens <= 0:
+        if (
+            not self.prompt.strip()
+            or self.prompt_tokens < 0
+            or self.max_new_tokens <= 0
+            or self.temperature < 0
+        ):
             raise ValueError("request token and prompt values are invalid")
         self.transition_timestamps.setdefault(self.status, self.created_at)
 

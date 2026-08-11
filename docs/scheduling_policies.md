@@ -10,15 +10,23 @@ requests until maximum batch size, token budget, or time is exhausted. Estimated
 work is `prompt_tokens + max_new_tokens` per request. This is a conservative scheduling
 estimate, not exact memory or execution cost.
 
-Compatibility currently includes output length and temperature. The future worker-local
-contract will add model revision, dtype, streaming mode, context constraints, and deadline
-compatibility.
+The original gateway scheduler checks output length and temperature. Managed worker batches
+also check model, output length, temperature, streaming mode, token budget, cancellation,
+and deadline expiry immediately before execution. Model revision and dtype become explicit
+batch keys when the model registry is connected.
 
 This is dynamic micro-batching, not continuous batching: requests cannot join a generation
 call after decoding starts.
 
-## Planned global policies
+## Executable global policies
 
-Round robin, least queue depth, residency-aware, memory-aware least-loaded, and estimated
-completion time are contracts only in Phase 1. They become executable in Phase 3 and Phase
-4 and must return structured candidate, rejection, and score data.
+`round_robin` rotates deterministically over eligible worker identifiers.
+
+`least_queue_depth` selects the smallest reported local queue, breaking ties by worker ID.
+Queue depth is a point-in-time heartbeat value, so it is a routing signal rather than an
+exact prediction of completion time.
+
+Both policies reject unhealthy, draining, concurrency-saturated, and non-resident workers
+before scoring. Decisions report candidates, per-worker rejection reasons, scores, and the
+estimated request token count. Residency-aware, memory-aware least-loaded, and estimated
+completion policies are introduced with placement.

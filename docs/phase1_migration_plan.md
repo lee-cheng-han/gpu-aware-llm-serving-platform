@@ -70,9 +70,13 @@ in-memory worker registry, registration, heartbeat, capacity, drain, and shutdow
 
 Place a control-plane scheduler between gateway and local workers. Implement filtering,
 round robin, least queue depth, and structured routing explanations. Connect the managed
-worker queue to the existing local batching scheduler, add the executable worker entry
-point, and supervise queue-consumer tasks with structured concurrency before enabling the
-multi-worker gateway path.
+worker queue to token-bounded local batching and supervise worker execution and heartbeat
+tasks with structured concurrency before enabling the multi-worker gateway path.
+
+Implemented: deterministic round-robin and least-queue policies, structured rejection and
+score data, deadline-aware assignment, process-local dispatch with safe handoff failure,
+compatible local batch execution, and supervised worker application lifecycle. The public
+gateway stays on its compatibility path until authenticated admission is introduced.
 
 ### Phase 4 — placement
 
@@ -109,8 +113,9 @@ separate wishlist:
   zero capacity; keep slow warmup and unload calls outside worker state locks; enforce
   simulator context and batch limits; test CUDA selection primitives without GPU hardware;
   and align project identity with the GPU-aware serving platform.
-- Phase 3: execute managed queues through local batching, add worker-process configuration,
-  expand execution/accounting tests, and supervise worker tasks as a unit.
+- Phase 3: execute managed queues through local batching, expand execution/accounting tests,
+  and supervise worker tasks as a unit. Worker-process deployment configuration moves with
+  the later deployment restructuring because the current worker directory is process-local.
 - Phase 4: add routing tests for unknown CPU capacity and mocked CUDA memory pressure.
 - Phase 5: coalesce duplicate loads and add safe memory reservations so load/unload races do
   not depend only on local worker locking.

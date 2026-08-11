@@ -21,6 +21,13 @@
 - Simulated GPU failures are deterministic when a failure interval is configured. They are
   test behavior and are never presented as real CUDA failures.
 - CUDA construction fails clearly when PyTorch does not report an available CUDA device.
+- A request whose deadline has passed before global assignment becomes `TIMED_OUT`.
+- If a selected worker disappears or rejects handoff, the request returns to global
+  `QUEUED` state with its attempt count retained; it is not silently duplicated.
+- Runtime failure marks every request in the affected local batch failed. A malformed
+  result count is treated as runtime failure.
+- Heartbeat and execution loops are supervised together. A loop failure cancels its peer,
+  waits for non-interruptible threaded generation to finish, then unregisters the worker.
 
 ## Not implemented yet
 

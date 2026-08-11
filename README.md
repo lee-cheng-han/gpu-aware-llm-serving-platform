@@ -18,6 +18,8 @@ The deep axis is queueing and scheduling—not chatbot product features.
 - Repeatable benchmark clients, Docker, and one-pod kind manifests
 - Typed CPU/CUDA worker abstractions, deterministic simulated GPU execution, and an
   in-memory heartbeat-aware worker registry
+- Round-robin and least-queue global routing with structured decision explanations
+- Supervised worker heartbeats and token-bounded local worker execution
 
 ## What This Project Is Not
 
