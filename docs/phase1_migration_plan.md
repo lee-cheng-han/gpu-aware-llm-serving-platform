@@ -83,6 +83,12 @@ gateway stays on its compatibility path until authenticated admission is introdu
 Add real CUDA memory probes, simulated GPU capacity, residency-aware placement,
 memory-aware least-loaded routing, and estimated-completion routing.
 
+Implemented: PyTorch CUDA free, total, allocated, and reserved memory probes; deterministic
+simulated capacity; a configurable placement safety reserve; model-residency-aware and
+memory-aware least-loaded policies; estimated-completion scoring; context, runtime, memory,
+and deadline feasibility filters; and structured scoring inputs. Cold placement produces a
+decision but is not dispatched successfully until model loading is connected in Phase 5.
+
 ### Phase 5 — model lifecycle
 
 Add an in-memory model registry, load coalescing, memory reservations, warmup, cache metrics,

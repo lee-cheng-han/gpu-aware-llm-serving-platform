@@ -7,8 +7,10 @@
 - Heartbeat expiry is in-memory and explicitly invoked by the control plane; a periodic
   monitor is not wired yet.
 - No tenant admission or persistent request store is active yet.
-- Global routing currently requires model residency; cold-start placement and memory-aware
-  routing are not implemented yet.
+- Placement can select a feasible cold worker, but dispatch cannot load the model until the
+  model-lifecycle layer is connected.
+- Estimated completion time assumes queued requests resemble the incoming request and uses
+  registered load timeout as the cold-start penalty; it is not a latency guarantee.
 - Standard Hugging Face `generate()` is used.
 - There is no PagedAttention, custom KV-cache paging, tensor parallelism, or true continuous
   batching.

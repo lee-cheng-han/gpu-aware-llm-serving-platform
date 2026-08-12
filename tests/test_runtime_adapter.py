@@ -44,6 +44,8 @@ def test_cuda_capacity_uses_pytorch_device_apis(monkeypatch):
         is_available=lambda: True,
         mem_get_info=lambda index: (6_000, 8_000),
         get_device_name=lambda index: f"fake-cuda-{index}",
+        memory_allocated=lambda index: 1_000,
+        memory_reserved=lambda index: 1_500,
     )
     monkeypatch.setattr(
         "runtime.huggingface.runtime.import_module",
@@ -57,6 +59,8 @@ def test_cuda_capacity_uses_pytorch_device_apis(monkeypatch):
     assert capacity.device_name == "fake-cuda-2"
     assert capacity.total_memory_bytes == 8_000
     assert capacity.available_memory_bytes == 6_000
+    assert capacity.allocated_memory_bytes == 1_000
+    assert capacity.reserved_memory_bytes == 1_500
 
 
 def test_cuda_capacity_fails_when_cuda_is_unavailable(monkeypatch):

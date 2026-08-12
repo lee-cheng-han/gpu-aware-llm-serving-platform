@@ -12,6 +12,7 @@ class RoutingDecision:
     candidates: tuple[str, ...]
     rejected: dict[str, str]
     scores: dict[str, float]
+    scoring_inputs: dict[str, dict[str, float | int | bool | None]]
 
 
 class RoutingPolicy(Protocol):

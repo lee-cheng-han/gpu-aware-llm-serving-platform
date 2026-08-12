@@ -175,4 +175,6 @@ class SimulatedGpuRuntime:
             self.config.device_name,
             self.config.total_memory_bytes,
             self.config.total_memory_bytes - used,
+            used,
+            used,
         )

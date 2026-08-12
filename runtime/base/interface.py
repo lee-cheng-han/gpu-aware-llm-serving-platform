@@ -11,6 +11,8 @@ class RuntimeCapacity:
     device_name: str
     total_memory_bytes: int | None
     available_memory_bytes: int | None
+    allocated_memory_bytes: int | None = None
+    reserved_memory_bytes: int | None = None
 
 
 @dataclass(frozen=True)

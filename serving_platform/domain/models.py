@@ -145,15 +145,25 @@ class WorkerState:
     health_status: HealthStatus = HealthStatus.REGISTERING
     draining: bool = False
     last_heartbeat: float = field(default_factory=time.monotonic)
+    allocated_memory_bytes: int | None = None
+    reserved_memory_bytes: int | None = None
 
     def __post_init__(self) -> None:
         if not self.worker_id:
             raise ValueError("worker_id is required")
         if (self.total_memory_bytes is None) != (self.available_memory_bytes is None):
             raise ValueError("worker memory values must both be known or both be unknown")
+        if self.total_memory_bytes is None and (
+            self.allocated_memory_bytes is not None
+            or self.reserved_memory_bytes is not None
+        ):
+            raise ValueError("allocated and reserved memory require a known total")
         if self.total_memory_bytes is not None and self.available_memory_bytes is not None:
             if self.total_memory_bytes < 0 or not 0 <= self.available_memory_bytes <= self.total_memory_bytes:
                 raise ValueError("worker memory accounting is invalid")
+            for value in (self.allocated_memory_bytes, self.reserved_memory_bytes):
+                if value is not None and not 0 <= value <= self.total_memory_bytes:
+                    raise ValueError("worker CUDA memory accounting is invalid")
         if min(self.queue_depth, self.active_batch_count) < 0 or self.max_concurrency <= 0:
             raise ValueError("worker queue and concurrency values are invalid")
 

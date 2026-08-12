@@ -82,4 +82,13 @@ class HuggingFaceRuntime:
             raise RuntimeError("CUDA worker requested but CUDA is unavailable")
         free_bytes, total_bytes = torch.cuda.mem_get_info(self.cuda_device_index)
         name = torch.cuda.get_device_name(self.cuda_device_index)
-        return RuntimeCapacity(DeviceType.CUDA, name, total_bytes, free_bytes)
+        allocated_bytes = torch.cuda.memory_allocated(self.cuda_device_index)
+        reserved_bytes = torch.cuda.memory_reserved(self.cuda_device_index)
+        return RuntimeCapacity(
+            DeviceType.CUDA,
+            name,
+            total_bytes,
+            free_bytes,
+            allocated_bytes,
+            reserved_bytes,
+        )

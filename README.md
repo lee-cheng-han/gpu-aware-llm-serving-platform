@@ -20,6 +20,7 @@ The deep axis is queueing and scheduling—not chatbot product features.
   in-memory heartbeat-aware worker registry
 - Round-robin and least-queue global routing with structured decision explanations
 - Supervised worker heartbeats and token-bounded local worker execution
+- Residency-aware, memory-safe, and estimated-completion placement policies
 
 ## What This Project Is Not
 

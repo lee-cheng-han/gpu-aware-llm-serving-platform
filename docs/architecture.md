@@ -94,6 +94,10 @@ memory, load delay, throughput, batching efficiency, and controlled failures wit
 claiming real inference. Round-robin and least-queue global policies now filter worker
 health, drain state, concurrency, and model residency and return structured explanations.
 Worker applications supervise heartbeats and local execution together with `TaskGroup`.
+Placement policies additionally use registered model memory and context requirements,
+PyTorch-reported CUDA free/allocated/reserved memory, a configurable safety reserve,
+residency, throughput, and deadline feasibility. Simulated memory values remain explicitly
+synthetic.
 
 See [the Phase 1 audit and migration plan](phase1_migration_plan.md) for the reuse map and
 activation sequence.

@@ -94,6 +94,8 @@ class ManagedWorker:
             health_status=self._health,
             draining=self._draining,
             last_heartbeat=self._clock(),
+            allocated_memory_bytes=capacity.allocated_memory_bytes,
+            reserved_memory_bytes=capacity.reserved_memory_bytes,
         )
 
     def register(self) -> WorkerState:

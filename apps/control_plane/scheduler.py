@@ -45,6 +45,7 @@ class GlobalScheduler:
                 "candidates": decision.candidates,
                 "rejected": decision.rejected,
                 "scores": decision.scores,
+                "scoring_inputs": decision.scoring_inputs,
                 "estimated_request_tokens": request.estimated_tokens,
             },
             assigned_at=now,
