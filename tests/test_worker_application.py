@@ -82,3 +82,34 @@ async def test_worker_application_propagates_execution_failure_and_unregisters()
     assert "controlled simulated GPU failure" in str(caught.value.exceptions[0])
     assert item.status == RequestState.FAILED
     assert registry.get("worker") is None
+
+
+@pytest.mark.asyncio
+async def test_worker_application_scans_for_idle_model_eviction():
+    definition = ModelDefinition(
+        "sim-model", "test", RuntimeType.SIMULATED, 100, ("float16",), "float16",
+        1024, 2048, True, True, 10, 0.001,
+    )
+    registry = InMemoryWorkerRegistry()
+    runtime = SimulatedGpuRuntime(
+        [definition], SimulatedGpuConfig(total_memory_bytes=1000), sleeper=lambda _: None
+    )
+    worker = ManagedWorker("worker", runtime, registry)
+    application = WorkerApplication(
+        worker,
+        [definition],
+        heartbeat_interval_seconds=1,
+        idle_poll_seconds=0.001,
+        eviction_scan_interval_seconds=0.005,
+    )
+    task = asyncio.create_task(application.run())
+    while runtime.is_model_loaded("sim-model") is False:
+        await asyncio.sleep(0)
+    deadline = asyncio.get_running_loop().time() + 1
+    while runtime.is_model_loaded("sim-model"):
+        assert asyncio.get_running_loop().time() < deadline
+        await asyncio.sleep(0.001)
+
+    application.stop()
+    await asyncio.wait_for(task, 1)
+    assert worker.model_cache_metrics().evictions == 1

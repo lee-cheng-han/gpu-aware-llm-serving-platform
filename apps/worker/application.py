@@ -16,14 +16,20 @@ class WorkerApplication:
         startup_models: Sequence[ModelDefinition] = (),
         heartbeat_interval_seconds: float = 5,
         idle_poll_seconds: float = 0.01,
+        eviction_scan_interval_seconds: float = 30,
         result_sink: Callable[[tuple[WorkerExecutionResult, ...]], None] | None = None,
     ):
-        if min(heartbeat_interval_seconds, idle_poll_seconds) <= 0:
+        if min(
+            heartbeat_interval_seconds,
+            idle_poll_seconds,
+            eviction_scan_interval_seconds,
+        ) <= 0:
             raise ValueError("worker loop intervals must be positive")
         self.worker = worker
         self.startup_models = tuple(startup_models)
         self.heartbeat_interval_seconds = heartbeat_interval_seconds
         self.idle_poll_seconds = idle_poll_seconds
+        self.eviction_scan_interval_seconds = eviction_scan_interval_seconds
         self.result_sink = result_sink or (lambda results: None)
         self._stop = asyncio.Event()
 
@@ -60,6 +66,11 @@ class WorkerApplication:
             else:
                 await self._wait_or_stop(self.idle_poll_seconds)
 
+    async def _eviction_loop(self) -> None:
+        while not await self._wait_or_stop(self.eviction_scan_interval_seconds):
+            await asyncio.to_thread(self.worker.evict_idle_models)
+            self.worker.heartbeat()
+
     async def run(self) -> None:
         self.worker.register()
         try:
@@ -69,5 +80,6 @@ class WorkerApplication:
             async with asyncio.TaskGroup() as tasks:
                 tasks.create_task(self._heartbeat_loop(), name="worker-heartbeat")
                 tasks.create_task(self._execution_loop(), name="worker-execution")
+                tasks.create_task(self._eviction_loop(), name="worker-model-eviction")
         finally:
             self.worker.shutdown()

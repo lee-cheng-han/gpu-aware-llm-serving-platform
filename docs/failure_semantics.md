@@ -28,6 +28,13 @@
   result count is treated as runtime failure.
 - Heartbeat and execution loops are supervised together. A loop failure cancels its peer,
   waits for non-interruptible threaded generation to finish, then unregisters the worker.
+- Concurrent requests for one cold model share one load attempt and receive the same load
+  failure. Failed loads release memory reservations and never publish residency.
+- LRU eviction never selects a model with queued or active requests. If no safe eviction can
+  satisfy the memory estimate and safety reserve, loading fails before runtime allocation.
+- Hugging Face loading is a synchronous library call and cannot be safely force-cancelled.
+  The control plane rechecks the request deadline after loading and does not enqueue an
+  expired request.
 
 ## Not implemented yet
 

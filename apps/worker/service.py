@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import time
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import import_module
-from threading import RLock
+from threading import Condition, RLock
 from typing import Protocol
 
 from runtime.base import ModelRuntime, RuntimeCapacity, RuntimeResult
@@ -42,6 +42,18 @@ class WorkerExecutionResult:
     result: RuntimeResult
 
 
+@dataclass(frozen=True)
+class ModelCacheMetrics:
+    cache_hits: int
+    cache_misses: int
+    cold_starts: int
+    load_failures: int
+    evictions: int
+    reserved_memory_bytes: int
+    coalesced_loads: int
+    model_load_seconds_total: float
+
+
 class ManagedWorker:
     """Operational worker shell shared by real and simulated runtimes."""
 
@@ -54,9 +66,10 @@ class ManagedWorker:
         max_concurrency: int = 1,
         max_batch_size: int = 8,
         max_batch_tokens: int = 4096,
+        memory_safety_reserve_bytes: int = 0,
         clock: Callable[[], float] = time.monotonic,
     ):
-        if not worker_id or min(
+        if memory_safety_reserve_bytes < 0 or not worker_id or min(
             max_queue_depth, max_concurrency, max_batch_size, max_batch_tokens
         ) <= 0:
             raise ValueError("worker id, queue depth, and concurrency must be positive")
@@ -67,15 +80,27 @@ class ManagedWorker:
         self.max_concurrency = max_concurrency
         self.max_batch_size = max_batch_size
         self.max_batch_tokens = max_batch_tokens
+        self.memory_safety_reserve_bytes = memory_safety_reserve_bytes
         self._clock = clock
         self._health = HealthStatus.REGISTERING
         self._draining = False
         self._resident_models: set[str] = set()
         self._loading_models: set[str] = set()
+        self._model_definitions: dict[str, ModelDefinition] = {}
+        self._model_last_used: dict[str, float] = {}
+        self._active_requests_by_model: Counter[str] = Counter()
+        self._load_attempts: Counter[str] = Counter()
+        self._load_failures: dict[str, tuple[int, BaseException]] = {}
+        self._reserved_model_memory_bytes = 0
+        self._cache_hits = self._cache_misses = self._cold_starts = 0
+        self._model_load_failures = self._model_evictions = 0
+        self._coalesced_loads = 0
+        self._model_load_seconds_total = 0.0
         self._queue: deque[RequestRecord] = deque()
         self._active_batch_count = 0
         self._recent_tokens_per_second = 0.0
         self._lock = RLock()
+        self._model_condition = Condition(self._lock)
 
     def _snapshot(self) -> WorkerState:
         capacity = self.runtime.capacity()
@@ -116,19 +141,97 @@ class ManagedWorker:
             return snapshot
 
     def load_model(self, model: ModelDefinition) -> None:
-        with self._lock:
+        evictions: list[tuple[str, ModelDefinition]] = []
+        with self._model_condition:
             if self._health != HealthStatus.HEALTHY or self._draining:
                 raise RuntimeError("worker is not accepting model loads")
             if model.model_id in self._resident_models:
+                self._cache_hits += 1
+                self._model_last_used[model.model_id] = self._clock()
                 return
+            waiting_for_attempt = self._load_attempts[model.model_id]
+            joined_existing_load = model.model_id in self._loading_models
+            if joined_existing_load:
+                self._coalesced_loads += 1
+            while model.model_id in self._loading_models:
+                self._model_condition.wait()
+            if model.model_id in self._resident_models:
+                self._cache_hits += 1
+                self._model_last_used[model.model_id] = self._clock()
+                return
+            failed = self._load_failures.get(model.model_id)
+            if (
+                joined_existing_load
+                and failed is not None
+                and failed[0] == waiting_for_attempt
+            ):
+                raise RuntimeError(f"coalesced model load failed: {model.model_id}") from failed[1]
+
+            capacity = self.runtime.capacity()
+            available = capacity.available_memory_bytes
+            required = model.estimated_memory_bytes
+            if available is not None:
+                usable = (
+                    available
+                    - self._reserved_model_memory_bytes
+                    - self.memory_safety_reserve_bytes
+                )
+                if usable < required:
+                    for model_id in sorted(
+                        self._resident_models,
+                        key=lambda item: (self._model_last_used.get(item, 0), item),
+                    ):
+                        if self._active_requests_by_model[model_id] or any(
+                            request.model_id == model_id for request in self._queue
+                        ):
+                            continue
+                        definition = self._model_definitions[model_id]
+                        evictions.append((model_id, definition))
+                        usable += definition.estimated_memory_bytes
+                        if usable >= required:
+                            break
+                    if usable < required:
+                        raise MemoryError(f"insufficient worker memory for {model.model_id}")
+                for model_id, _ in evictions:
+                    self._resident_models.remove(model_id)
+                    self._model_last_used.pop(model_id, None)
+
+            self._cache_misses += 1
+            self._cold_starts += 1
+            self._load_attempts[model.model_id] += 1
+            attempt = self._load_attempts[model.model_id]
             self._loading_models.add(model.model_id)
+            self._reserved_model_memory_bytes += required
+        load_started = time.perf_counter()
         try:
+            unloaded: list[tuple[str, ModelDefinition]] = []
+            for model_id, definition in evictions:
+                self.runtime.unload_model(model_id)
+                unloaded.append((model_id, definition))
             self.runtime.load_model(model)
-            with self._lock:
+            self.runtime.warmup_model(model.model_id)
+            with self._model_condition:
+                self._model_definitions[model.model_id] = model
                 self._resident_models.add(model.model_id)
+                self._model_last_used[model.model_id] = self._clock()
+                self._model_evictions += len(unloaded)
+                self._load_failures.pop(model.model_id, None)
+        except BaseException as exc:
+            with self._model_condition:
+                self._model_load_failures += 1
+                self._load_failures[model.model_id] = (attempt, exc)
+                for model_id, definition in evictions:
+                    if self.runtime.is_model_loaded(model_id):
+                        self._resident_models.add(model_id)
+                        self._model_definitions[model_id] = definition
+                        self._model_last_used[model_id] = self._clock()
+            raise
         finally:
-            with self._lock:
+            with self._model_condition:
+                self._model_load_seconds_total += time.perf_counter() - load_started
                 self._loading_models.discard(model.model_id)
+                self._reserved_model_memory_bytes -= required
+                self._model_condition.notify_all()
 
     def unload_model(self, model_id: str) -> None:
         with self._lock:
@@ -137,11 +240,13 @@ class ManagedWorker:
             if model_id not in self._resident_models:
                 return
             self._resident_models.remove(model_id)
+            self._model_last_used.pop(model_id, None)
         try:
             self.runtime.unload_model(model_id)
         except BaseException:
             with self._lock:
                 self._resident_models.add(model_id)
+                self._model_last_used[model_id] = self._clock()
             raise
 
     def warmup_model(self, model_id: str) -> None:
@@ -149,6 +254,38 @@ class ManagedWorker:
             if model_id not in self._resident_models:
                 raise RuntimeError("model must be loaded before warmup")
         self.runtime.warmup_model(model_id)
+
+    def evict_idle_models(self) -> tuple[str, ...]:
+        now = self._clock()
+        with self._lock:
+            eligible = [
+                model_id
+                for model_id in self._resident_models
+                if self._active_requests_by_model[model_id] == 0
+                and not any(request.model_id == model_id for request in self._queue)
+                and now - self._model_last_used.get(model_id, now)
+                >= self._model_definitions[model_id].idle_eviction_seconds
+            ]
+        evicted: list[str] = []
+        for model_id in sorted(eligible, key=lambda item: self._model_last_used[item]):
+            self.unload_model(model_id)
+            evicted.append(model_id)
+        with self._lock:
+            self._model_evictions += len(evicted)
+        return tuple(evicted)
+
+    def model_cache_metrics(self) -> ModelCacheMetrics:
+        with self._lock:
+            return ModelCacheMetrics(
+                self._cache_hits,
+                self._cache_misses,
+                self._cold_starts,
+                self._model_load_failures,
+                self._model_evictions,
+                self._reserved_model_memory_bytes,
+                self._coalesced_loads,
+                self._model_load_seconds_total,
+            )
 
     def enqueue_request(self, request: RequestRecord) -> None:
         with self._lock:
@@ -211,6 +348,8 @@ class ManagedWorker:
             self._queue.extendleft(reversed(deferred))
             for request in selected:
                 request.transition(RequestState.RUNNING, now)
+                self._active_requests_by_model[request.model_id] += 1
+            self._model_last_used[first.model_id] = now
             self._active_batch_count += 1
 
         started = time.perf_counter()
@@ -234,6 +373,8 @@ class ManagedWorker:
         finally:
             with self._lock:
                 self._active_batch_count -= 1
+                for request in selected:
+                    self._active_requests_by_model[request.model_id] -= 1
 
         elapsed = max(time.perf_counter() - started, 1e-9)
         with self._lock:

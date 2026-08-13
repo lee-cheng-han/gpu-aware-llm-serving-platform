@@ -94,6 +94,13 @@ decision but is not dispatched successfully until model loading is connected in 
 Add an in-memory model registry, load coalescing, memory reservations, warmup, cache metrics,
 and LRU eviction. Only registry entries may be loaded.
 
+Implemented: cold placement loads only catalog definitions; duplicate loads share one
+attempt; reservations are released after success or failure; warmup completes before queue
+admission; memory pressure uses LRU eviction; queued and active models are protected; idle
+timeouts are scanned by the supervised worker application; and cache hits, misses, cold
+starts, coalesced loads, load failures, load duration, reservations, and evictions are
+tracked. A deadline is rechecked after an uninterruptible runtime load.
+
 ### Phase 6 — requests and tenants
 
 Connect the platform state machine to API requests, add authenticated tenant context,

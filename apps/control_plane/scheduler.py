@@ -25,10 +25,13 @@ class GlobalScheduler:
         self.policy = policy
         self._clock = clock
 
+    def now(self) -> float:
+        return self._clock()
+
     def assign(self, request: RequestRecord) -> Assignment:
         if request.status not in {RequestState.ADMITTED, RequestState.QUEUED}:
             raise ValueError("only admitted or globally queued requests can be assigned")
-        now = self._clock()
+        now = self.now()
         if request.deadline <= now:
             request.transition(RequestState.TIMED_OUT, now)
             raise RequestDeadlineExceeded("request deadline expired before assignment")

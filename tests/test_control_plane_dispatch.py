@@ -9,8 +9,8 @@ from apps.control_plane import (
 from apps.worker import ManagedWorker
 from runtime.simulated_gpu import SimulatedGpuConfig, SimulatedGpuRuntime
 from serving_platform.domain import ModelDefinition, RequestRecord, RequestState, RuntimeType
-from serving_platform.registry import InMemoryWorkerRegistry
-from serving_platform.routing import LeastQueueDepthPolicy
+from serving_platform.registry import InMemoryModelRegistry, InMemoryWorkerRegistry
+from serving_platform.routing import LeastQueueDepthPolicy, ModelResidencyAwarePolicy
 
 
 def model() -> ModelDefinition:
@@ -79,3 +79,28 @@ def test_control_plane_returns_request_to_global_queue_if_worker_disappears():
     assert item.assigned_worker_id is None
     assert item.attempt_count == 1
     worker.shutdown()
+
+
+def test_control_plane_loads_registered_model_after_cold_placement():
+    definition = model()
+    models = InMemoryModelRegistry([definition])
+    registry = InMemoryWorkerRegistry()
+    runtime = SimulatedGpuRuntime(
+        [definition], SimulatedGpuConfig(total_memory_bytes=1000), sleeper=lambda _: None
+    )
+    worker = ManagedWorker("cold", runtime, registry)
+    worker.register()
+    directory = WorkerDirectory()
+    directory.add(worker)
+    control_plane = ControlPlane(
+        GlobalScheduler(registry, ModelResidencyAwarePolicy(models)), directory, models
+    )
+    item = request("cold-request")
+
+    assignment = control_plane.dispatch(item)
+
+    assert assignment.worker_id == "cold"
+    assert runtime.is_model_loaded("model")
+    assert item.status == RequestState.QUEUED
+    assert worker.model_cache_metrics().cold_starts == 1
+    assert registry.get("cold").resident_models == {"model"}

@@ -7,8 +7,9 @@
 - Heartbeat expiry is in-memory and explicitly invoked by the control plane; a periodic
   monitor is not wired yet.
 - No tenant admission or persistent request store is active yet.
-- Placement can select a feasible cold worker, but dispatch cannot load the model until the
-  model-lifecycle layer is connected.
+- Model lifecycle state and cache metrics are process-local and reset on worker restart.
+- Registered model memory is an estimate; runtime allocation can still fail despite a
+  reservation and safety reserve.
 - Estimated completion time assumes queued requests resemble the incoming request and uses
   registered load timeout as the cold-start penalty; it is not a latency guarantee.
 - Standard Hugging Face `generate()` is used.

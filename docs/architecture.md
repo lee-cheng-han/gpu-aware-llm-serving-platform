@@ -99,5 +99,11 @@ PyTorch-reported CUDA free/allocated/reserved memory, a configurable safety rese
 residency, throughput, and deadline feasibility. Simulated memory values remain explicitly
 synthetic.
 
+Cold assignments flow through the in-memory model catalog into the selected worker's model
+cache. The worker reserves estimated memory before releasing its state lock, coalesces
+duplicate loads with a condition variable, warms the model, then publishes residency before
+the request enters its local queue. Under pressure it evicts least-recently-used models that
+have neither queued nor active requests. A supervised scan applies per-model idle timeouts.
+
 See [the Phase 1 audit and migration plan](phase1_migration_plan.md) for the reuse map and
 activation sequence.
