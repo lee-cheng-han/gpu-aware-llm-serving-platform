@@ -35,10 +35,15 @@
 - Hugging Face loading is a synchronous library call and cannot be safely force-cancelled.
   The control plane rechecks the request deadline after loading and does not enqueue an
   expired request.
+- A cancelled global or worker-queued request is removed before execution. An active request
+  becomes terminal immediately; uninterruptible model compute may finish, but its output is
+  discarded and the request cannot later become completed.
+- Admission reservations are released idempotently at terminal handling. Tenant queue,
+  concurrency, and token limits are changed under one lock so concurrent admissions cannot
+  oversubscribe them.
 
 ## Not implemented yet
 
-There is no crash reassignment, model-load reservation, persistent request state, or
-control-plane recovery yet. Those semantics must be implemented and tested before
-multi-worker mode is advertised. Partially streamed requests will never be retried
-automatically.
+There is no crash reassignment, persistent request state, or control-plane recovery yet.
+Those semantics must be implemented and tested before multi-worker mode is advertised.
+Partially streamed requests will never be retried automatically.

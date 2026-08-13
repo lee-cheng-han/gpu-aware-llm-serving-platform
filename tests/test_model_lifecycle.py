@@ -204,3 +204,35 @@ def test_memory_pressure_never_evicts_an_actively_generating_model():
     assert runtime.is_model_loaded("first")
     assert not runtime.is_model_loaded("second")
     assert item.status == RequestState.COMPLETED
+
+
+def test_active_cancellation_discards_uninterruptible_runtime_output():
+    definition = model("model")
+    generation_started = Event()
+    release_generation = Event()
+
+    def sleeper(seconds: float) -> None:
+        if seconds > 0:
+            generation_started.set()
+            assert release_generation.wait(1)
+
+    runtime = SimulatedGpuRuntime(
+        [definition], SimulatedGpuConfig(total_memory_bytes=1000), sleeper=sleeper
+    )
+    worker = managed(runtime)
+    worker.load_model(definition)
+    item = RequestRecord(
+        "request", "tenant", "model", "hello", 1, 1, 0, 100, False
+    )
+    item.transition(RequestState.VALIDATED)
+    item.transition(RequestState.ADMITTED)
+    item.transition(RequestState.ASSIGNED)
+    worker.enqueue_request(item)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        execution = pool.submit(worker.execute_batch)
+        assert generation_started.wait(1)
+        assert worker.cancel_request(item.request_id)
+        release_generation.set()
+        assert execution.result(timeout=1) == ()
+    assert item.status == RequestState.CANCELLED

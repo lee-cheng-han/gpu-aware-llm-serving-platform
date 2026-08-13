@@ -105,5 +105,12 @@ duplicate loads with a condition variable, warms the model, then publishes resid
 the request enters its local queue. Under pressure it evicts least-recently-used models that
 have neither queued nor active requests. A supervised scan applies per-model idle timeouts.
 
+Tenant identity is derived by the gateway authenticator, never from request JSON. The
+control-plane admission controller reserves queue, concurrency, and estimated-token capacity
+atomically. Admitted requests enter a weighted deficit round-robin queue; tenant weight
+controls quantum, priority chooses within a tenant, and wait-time aging prevents old
+low-priority work from starving. The in-memory request store uses isolated snapshots and
+tracks the explicit lifecycle without logging prompts or generated text.
+
 See [the Phase 1 audit and migration plan](phase1_migration_plan.md) for the reuse map and
 activation sequence.

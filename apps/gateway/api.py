@@ -10,8 +10,60 @@ from apps.gateway.limits import validate_request
 from apps.gateway.schemas import GenerateRequest, GenerateResponse, ReadinessResponse
 from scheduler.queue import QueueClosed
 from scheduler.request import InferenceRequest, RequestStatus
+from serving_platform.domain import RequestRecord, RequestState
 
 router = APIRouter()
+
+
+def _platform_request(
+    item: InferenceRequest,
+    body: GenerateRequest,
+    tenant_id: str,
+    model_id: str,
+    prompt_tokens: int,
+    timeout_seconds: float,
+) -> RequestRecord:
+    now = time.monotonic()
+    deadline = now + (
+        body.deadline_seconds if body.deadline_seconds is not None else timeout_seconds
+    )
+    record = RequestRecord(
+        item.request_id,
+        tenant_id,
+        model_id,
+        body.prompt,
+        prompt_tokens,
+        body.max_new_tokens,
+        body.priority,
+        deadline,
+        False,
+        body.temperature,
+        created_at=now,
+    )
+    record.transition(RequestState.VALIDATED, now)
+    record.transition(RequestState.ADMITTED, now)
+    record.transition(RequestState.QUEUED, now)
+    return record
+
+
+def _finish_platform_request(
+    state,
+    record: RequestRecord,
+    status: RequestStatus,
+    started_at: float | None = None,
+) -> None:
+    target = {
+        RequestStatus.COMPLETED: RequestState.COMPLETED,
+        RequestStatus.FAILED: RequestState.FAILED,
+        RequestStatus.REJECTED: RequestState.REJECTED,
+        RequestStatus.TIMEOUT: RequestState.TIMED_OUT,
+        RequestStatus.CANCELLED: RequestState.CANCELLED,
+    }.get(status)
+    if target is not None and not record.terminal:
+        if record.status == RequestState.QUEUED and started_at:
+            record.transition(RequestState.RUNNING, started_at)
+        record.transition(target)
+    state.platform_requests.save(record)
 
 
 def _response(item: InferenceRequest) -> GenerateResponse:
@@ -28,6 +80,13 @@ def _response(item: InferenceRequest) -> GenerateResponse:
 async def _validated(body: GenerateRequest, request: Request) -> tuple[int, float]:
     if not body.prompt.strip():
         raise APIError(400, "empty_prompt", "prompt must not be empty")
+    if len(body.prompt) > request.app.state.settings.max_prompt_characters:
+        raise APIError(
+            413,
+            "prompt_size_exceeded",
+            "prompt exceeds the configured character limit",
+            {"max_prompt_characters": request.app.state.settings.max_prompt_characters},
+        )
     worker = request.app.state.worker
     # Both operations touch the same tokenizer/model. Keep them serial: the
     # context lookup is trivial after the token-count call has loaded the model.
@@ -74,6 +133,7 @@ async def ready(request: Request):
 @router.post("/v1/generate", response_model=GenerateResponse)
 async def generate(body: GenerateRequest, request: Request):
     state = request.app.state
+    identity = state.authenticator.authenticate(request)
     state.metrics.received()
     try:
         async with state.limiter.slot():
@@ -82,15 +142,32 @@ async def generate(body: GenerateRequest, request: Request):
                 body.prompt, body.max_new_tokens, body.temperature, tokens,
                 state.settings.scheduler_policy,
             )
+            if body.deadline_seconds is not None:
+                item.deadline_at = time.monotonic() + body.deadline_seconds
             item.validation_tokenization_ms = validation_tokenization_ms
+            platform_record = _platform_request(
+                item,
+                body,
+                identity.tenant_id,
+                state.settings.model_name,
+                tokens,
+                state.settings.request_timeout_seconds,
+            )
+            state.platform_requests.create(platform_record)
             try:
                 await state.request_queue.submit(item)
             except QueueClosed:
+                _finish_platform_request(
+                    state, platform_record, RequestStatus.REJECTED
+                )
                 state.metrics.rejected(reason="service_shutting_down")
                 raise APIError(
                     503, "service_shutting_down", "server is shutting down"
                 ) from None
             except asyncio.QueueFull:
+                _finish_platform_request(
+                    state, platform_record, RequestStatus.REJECTED
+                )
                 raise APIError(503, "queue_full", "scheduler queue is full") from None
             try:
                 # Shield keeps client cancellation from cancelling the scheduler's
@@ -100,7 +177,11 @@ async def generate(body: GenerateRequest, request: Request):
                 result = await asyncio.shield(item.future)
             except asyncio.CancelledError:
                 item.cancel("client disconnected")
+                _finish_platform_request(state, platform_record, item.status)
                 raise
+            _finish_platform_request(
+                state, platform_record, result.status, result.started_at or None
+            )
             if result.status == RequestStatus.TIMEOUT:
                 raise APIError(504, "request_timeout", "request timed out")
             if result.status == RequestStatus.REJECTED:
@@ -126,6 +207,7 @@ async def generate(body: GenerateRequest, request: Request):
 async def generate_stream(body: GenerateRequest, request: Request):
     """Single-request SSE; it intentionally bypasses the batching queue."""
     state = request.app.state
+    identity = state.authenticator.authenticate(request)
     state.metrics.received()
     try:
         await state.stream_tracker.start()
@@ -156,9 +238,22 @@ async def generate_stream(body: GenerateRequest, request: Request):
     item = InferenceRequest(
         body.prompt, body.max_new_tokens, body.temperature, tokens, "single_stream"
     )
+    if body.deadline_seconds is not None:
+        item.deadline_at = time.monotonic() + body.deadline_seconds
     item.queued_at = item.started_at = time.monotonic()
     item.validation_tokenization_ms = validation_tokenization_ms
     item.status = RequestStatus.RUNNING
+    platform_record = _platform_request(
+        item,
+        body,
+        identity.tenant_id,
+        state.settings.model_name,
+        tokens,
+        state.settings.request_timeout_seconds,
+    )
+    platform_record.stream = True
+    platform_record.transition(RequestState.RUNNING)
+    state.platform_requests.create(platform_record)
 
     async def events():
         try:
@@ -203,6 +298,7 @@ async def generate_stream(body: GenerateRequest, request: Request):
             state.metrics.model_execution_finished()
             await state.limiter.release()
             await state.stream_tracker.finish()
+            _finish_platform_request(state, platform_record, item.status)
 
     return StreamingResponse(events(), media_type="text/event-stream")
 

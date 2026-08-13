@@ -2,6 +2,7 @@ import httpx
 from conftest import FakeWorker
 
 from apps.gateway.main import create_app
+from serving_platform.domain import RequestState
 
 
 async def test_successful_greedy_generation(settings):
@@ -22,3 +23,11 @@ async def test_successful_greedy_generation(settings):
     assert body["input_tokens"] == 2
     assert body["output_tokens"] == 2
     assert worker.temperatures == [0]
+    platform_record = app.state.platform_requests.get(body["request_id"])
+    assert platform_record.status == RequestState.COMPLETED
+    assert platform_record.priority == 0
+    assert (
+        platform_record.transition_timestamps[RequestState.QUEUED]
+        <= platform_record.transition_timestamps[RequestState.RUNNING]
+        <= platform_record.transition_timestamps[RequestState.COMPLETED]
+    )

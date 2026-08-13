@@ -6,6 +6,8 @@ from apps.control_plane.scheduler import GlobalScheduler
 from apps.worker import ManagedWorker
 from serving_platform.domain import Assignment, RequestRecord, RequestState
 from serving_platform.registry.interfaces import ModelRegistry
+from serving_platform.request_state.interfaces import RequestStateStore
+from serving_platform.scheduling import WeightedFairRequestQueue
 
 
 class WorkerDispatchError(RuntimeError):
@@ -38,13 +40,19 @@ class ControlPlane:
         scheduler: GlobalScheduler,
         workers: WorkerDirectory,
         models: ModelRegistry | None = None,
+        requests: RequestStateStore | None = None,
+        global_queue: WeightedFairRequestQueue | None = None,
     ):
         self.scheduler = scheduler
         self.workers = workers
         self.models = models
+        self.requests = requests
+        self.global_queue = global_queue
 
     def dispatch(self, request: RequestRecord) -> Assignment:
         assignment = self.scheduler.assign(request)
+        if self.requests is not None:
+            self.requests.save(request)
         worker = self.workers.get(assignment.worker_id)
         try:
             if worker is None:
@@ -61,6 +69,8 @@ class ControlPlane:
                 request.transition(RequestState.TIMED_OUT)
                 raise WorkerDispatchError("request deadline expired during model loading")
             worker.enqueue_request(request)
+            if self.requests is not None:
+                self.requests.save(request)
         except (MemoryError, OverflowError, RuntimeError) as exc:
             if not request.terminal:
                 request.assigned_worker_id = None
@@ -69,3 +79,21 @@ class ControlPlane:
                 raise
             raise WorkerDispatchError("selected worker rejected the handoff") from exc
         return assignment
+
+    def cancel(self, request_id: str) -> bool:
+        if self.requests is None:
+            raise RuntimeError("request state store is required for global cancellation")
+        request = self.requests.get(request_id)
+        if request is None or request.terminal:
+            return False
+        cancelled = False
+        if self.global_queue is not None:
+            cancelled = self.global_queue.cancel(request_id)
+        if not cancelled and request.assigned_worker_id:
+            worker = self.workers.get(request.assigned_worker_id)
+            if worker is not None:
+                cancelled = worker.cancel_request(request_id)
+        if cancelled:
+            request.transition(RequestState.CANCELLED)
+            self.requests.save(request)
+        return cancelled

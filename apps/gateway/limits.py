@@ -80,7 +80,7 @@ def validate_request(
         raise APIError(400, "empty_prompt", "prompt must not be empty")
     if prompt_tokens > settings.max_prompt_tokens:
         raise APIError(
-            400, "prompt_too_long",
+            413, "prompt_too_long",
             f"prompt exceeds {settings.max_prompt_tokens} tokens",
             {"input_tokens": prompt_tokens, "max_prompt_tokens": settings.max_prompt_tokens},
         )
@@ -92,7 +92,7 @@ def validate_request(
         )
     if prompt_tokens + max_new_tokens > context_window_tokens:
         raise APIError(
-            400, "context_window_exceeded",
+            413, "context_window_exceeded",
             "prompt and requested output exceed the model context window",
             {
                 "input_tokens": prompt_tokens,

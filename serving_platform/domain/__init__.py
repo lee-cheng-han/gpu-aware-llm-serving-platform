@@ -6,6 +6,7 @@ from serving_platform.domain.models import (
     RequestRecord,
     RequestState,
     RuntimeType,
+    TenantLimits,
     WorkerState,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "RequestRecord",
     "RequestState",
     "RuntimeType",
+    "TenantLimits",
     "WorkerState",
 ]

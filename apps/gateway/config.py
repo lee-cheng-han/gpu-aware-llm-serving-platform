@@ -27,6 +27,7 @@ class Settings:
     model_revision: str = "main"
     scheduler_policy: str = "no_batching"
     max_prompt_tokens: int = 1024
+    max_prompt_characters: int = 16_384
     max_new_tokens: int = 128
     max_queue_size: int = 128
     max_concurrent_requests: int = 16
@@ -37,6 +38,8 @@ class Settings:
     model_warmup_on_start: bool = False
     shutdown_grace_seconds: float = 30
     metrics_sample_limit: int = 10_000
+    api_keys: str = ""
+    cors_allowed_origins: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -47,6 +50,7 @@ class Settings:
             model_revision=_env("MODEL_REVISION", "main", str),
             scheduler_policy=_env("SCHEDULER_POLICY", "no_batching", str),
             max_prompt_tokens=_env("MAX_PROMPT_TOKENS", 1024, int),
+            max_prompt_characters=_env("MAX_PROMPT_CHARACTERS", 16_384, int),
             max_new_tokens=_env("MAX_NEW_TOKENS", 128, int),
             max_queue_size=_env("MAX_QUEUE_SIZE", 128, int),
             max_concurrent_requests=_env("MAX_CONCURRENT_REQUESTS", 16, int),
@@ -57,13 +61,15 @@ class Settings:
             model_warmup_on_start=_bool_env("MODEL_WARMUP_ON_START", False),
             shutdown_grace_seconds=_env("SHUTDOWN_GRACE_SECONDS", 30, float),
             metrics_sample_limit=_env("METRICS_SAMPLE_LIMIT", 10_000, int),
+            api_keys=_env("API_KEYS", "", str),
+            cors_allowed_origins=_env("CORS_ALLOWED_ORIGINS", "", str),
         )
 
     def validate(self) -> None:
         if self.scheduler_policy not in {"no_batching", "dynamic_batch"}:
             raise ValueError("SCHEDULER_POLICY must be no_batching or dynamic_batch")
         for name in (
-            "port", "max_prompt_tokens", "max_new_tokens", "max_queue_size",
+            "port", "max_prompt_tokens", "max_prompt_characters", "max_new_tokens", "max_queue_size",
             "max_concurrent_requests", "max_batch_size", "max_total_batch_tokens",
             "metrics_sample_limit",
         ):

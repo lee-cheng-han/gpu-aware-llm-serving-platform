@@ -69,6 +69,7 @@ ALLOWED_REQUEST_TRANSITIONS: dict[RequestState, frozenset[RequestState]] = {
     RequestState.QUEUED: frozenset({
         RequestState.ASSIGNED,
         RequestState.RUNNING,
+        RequestState.REJECTED,
         RequestState.TIMED_OUT,
         RequestState.CANCELLED,
         RequestState.FAILED,
@@ -220,3 +221,21 @@ class Assignment:
     policy: str
     explanation: dict[str, object]
     assigned_at: float = field(default_factory=time.monotonic)
+
+
+@dataclass(frozen=True)
+class TenantLimits:
+    tenant_id: str
+    max_concurrent_requests: int
+    max_queued_requests: int
+    token_quota: int
+    scheduling_weight: int = 1
+
+    def __post_init__(self) -> None:
+        if not self.tenant_id or min(
+            self.max_concurrent_requests,
+            self.max_queued_requests,
+            self.token_quota,
+            self.scheduling_weight,
+        ) <= 0:
+            raise ValueError("tenant limits must be positive")

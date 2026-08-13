@@ -5,15 +5,18 @@ from contextlib import asynccontextmanager, suppress
 from fastapi import FastAPI, HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from apps.gateway.api import router
+from apps.gateway.auth import ApiKeyAuthenticator, parse_api_keys
 from apps.gateway.config import Settings
 from apps.gateway.limits import ConcurrencyLimiter, StreamTracker
 from apps.gateway.metrics import Metrics
 from inference.worker import InferenceWorker
 from scheduler.queue import RequestQueue
 from scheduler.scheduler_loop import run_scheduler
+from serving_platform.request_state import InMemoryRequestStateStore
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +51,19 @@ def create_app(settings: Settings | None = None, worker=None) -> FastAPI:
                 await task
 
     app = FastAPI(title="GPU-Aware LLM Serving Platform", version="1.0.0", lifespan=lifespan)
+    origins = [
+        origin.strip()
+        for origin in settings.cors_allowed_origins.split(",")
+        if origin.strip()
+    ]
+    if origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials=False,
+            allow_methods=["GET", "POST"],
+            allow_headers=["Authorization", "Content-Type"],
+        )
     app.state.settings = settings
     app.state.worker = worker or InferenceWorker(
         settings.model_name, settings.model_revision
@@ -56,6 +72,8 @@ def create_app(settings: Settings | None = None, worker=None) -> FastAPI:
     app.state.request_queue = RequestQueue(settings.max_queue_size)
     app.state.limiter = ConcurrencyLimiter(settings.max_concurrent_requests)
     app.state.stream_tracker = StreamTracker()
+    app.state.authenticator = ApiKeyAuthenticator(parse_api_keys(settings.api_keys))
+    app.state.platform_requests = InMemoryRequestStateStore()
     app.include_router(router)
 
     @app.exception_handler(RequestValidationError)

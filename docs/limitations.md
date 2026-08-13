@@ -6,7 +6,10 @@
   control plane, but that path is not active in the public API yet.
 - Heartbeat expiry is in-memory and explicitly invoked by the control plane; a periodic
   monitor is not wired yet.
-- No tenant admission or persistent request store is active yet.
+- Tenant admission and fairness are in-memory control-plane components; the public API still
+  uses its compatibility limiter until the multi-worker deployment path is activated.
+- The in-memory request store contains prompts for the process lifetime. Persistent storage
+  is not active, and future persistence will omit prompts and generated text by default.
 - Model lifecycle state and cache metrics are process-local and reset on worker restart.
 - Registered model memory is an estimate; runtime allocation can still fail despite a
   reservation and safety reserve.

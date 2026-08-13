@@ -89,6 +89,7 @@ class ManagedWorker:
         self._model_definitions: dict[str, ModelDefinition] = {}
         self._model_last_used: dict[str, float] = {}
         self._active_requests_by_model: Counter[str] = Counter()
+        self._active_requests: dict[str, RequestRecord] = {}
         self._load_attempts: Counter[str] = Counter()
         self._load_failures: dict[str, tuple[int, BaseException]] = {}
         self._reserved_model_memory_bytes = 0
@@ -309,6 +310,10 @@ class ManagedWorker:
                     self._queue.remove(request)
                     request.transition(RequestState.CANCELLED)
                     return True
+            active = self._active_requests.get(request_id)
+            if active is not None and not active.terminal:
+                active.transition(RequestState.CANCELLED)
+                return True
         return False
 
     def execute_batch(self) -> tuple[WorkerExecutionResult, ...]:
@@ -349,6 +354,7 @@ class ManagedWorker:
             for request in selected:
                 request.transition(RequestState.RUNNING, now)
                 self._active_requests_by_model[request.model_id] += 1
+                self._active_requests[request.request_id] = request
             self._model_last_used[first.model_id] = now
             self._active_batch_count += 1
 
@@ -368,24 +374,28 @@ class ManagedWorker:
             finished = self._clock()
             with self._lock:
                 for request in selected:
-                    request.transition(RequestState.FAILED, finished)
+                    if not request.terminal:
+                        request.transition(RequestState.FAILED, finished)
             raise
         finally:
             with self._lock:
                 self._active_batch_count -= 1
                 for request in selected:
                     self._active_requests_by_model[request.model_id] -= 1
+                    self._active_requests.pop(request.request_id, None)
 
         elapsed = max(time.perf_counter() - started, 1e-9)
         with self._lock:
             for request in selected:
-                request.transition(RequestState.COMPLETED, self._clock())
+                if not request.terminal:
+                    request.transition(RequestState.COMPLETED, self._clock())
             self._recent_tokens_per_second = sum(
                 result.output_tokens for result in results
             ) / elapsed
         return tuple(
             WorkerExecutionResult(request.request_id, result)
             for request, result in zip(selected, results, strict=True)
+            if request.status == RequestState.COMPLETED
         )
 
     def drain(self) -> None:

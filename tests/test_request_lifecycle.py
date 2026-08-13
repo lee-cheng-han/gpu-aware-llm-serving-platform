@@ -47,6 +47,17 @@ async def test_cancelled_queued_request_is_not_dispatched(settings):
     assert metrics.snapshot()["cancelled_requests"] == 1
 
 
+async def test_explicit_deadline_is_checked_before_execution(settings):
+    worker, metrics = FakeWorker(), Metrics()
+    request = make_request()
+    request.queued_at = time.monotonic()
+    request.deadline_at = request.queued_at
+    request.future = asyncio.get_running_loop().create_future()
+    await process_one(request, worker, settings, metrics)
+    assert request.status == RequestStatus.TIMEOUT
+    assert worker.batch_calls == []
+
+
 async def test_shutdown_finishes_active_and_rejects_queued(settings, monkeypatch):
     generation_started = asyncio.Event()
     release_generation = asyncio.Event()

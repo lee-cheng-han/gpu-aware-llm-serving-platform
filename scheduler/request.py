@@ -51,9 +51,14 @@ class InferenceRequest:
     batch_collection_ms: float = 0
     future: asyncio.Future | None = None
     metrics_recorded: bool = False
+    deadline_at: float | None = None
 
     def timed_out(self, timeout: float) -> bool:
-        return bool(self.queued_at and time.monotonic() - self.queued_at >= timeout)
+        now = time.monotonic()
+        return bool(
+            (self.deadline_at is not None and now >= self.deadline_at)
+            or (self.queued_at and now - self.queued_at >= timeout)
+        )
 
     @property
     def terminal(self) -> bool:

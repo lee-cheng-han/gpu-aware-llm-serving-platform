@@ -8,9 +8,17 @@ from apps.control_plane import (
 )
 from apps.worker import ManagedWorker
 from runtime.simulated_gpu import SimulatedGpuConfig, SimulatedGpuRuntime
-from serving_platform.domain import ModelDefinition, RequestRecord, RequestState, RuntimeType
+from serving_platform.domain import (
+    ModelDefinition,
+    RequestRecord,
+    RequestState,
+    RuntimeType,
+    TenantLimits,
+)
 from serving_platform.registry import InMemoryModelRegistry, InMemoryWorkerRegistry
+from serving_platform.request_state import InMemoryRequestStateStore
 from serving_platform.routing import LeastQueueDepthPolicy, ModelResidencyAwarePolicy
+from serving_platform.scheduling import WeightedFairRequestQueue
 
 
 def model() -> ModelDefinition:
@@ -104,3 +112,21 @@ def test_control_plane_loads_registered_model_after_cold_placement():
     assert item.status == RequestState.QUEUED
     assert worker.model_cache_metrics().cold_starts == 1
     assert registry.get("cold").resident_models == {"model"}
+
+
+def test_control_plane_cancels_request_waiting_in_global_fair_queue():
+    requests = InMemoryRequestStateStore()
+    fair_queue = WeightedFairRequestQueue([TenantLimits("tenant", 1, 2, 100)])
+    item = request("queued")
+    requests.create(item)
+    fair_queue.enqueue(item)
+    requests.save(item)
+    control_plane = ControlPlane(
+        GlobalScheduler(InMemoryWorkerRegistry(), LeastQueueDepthPolicy()),
+        WorkerDirectory(),
+        requests=requests,
+        global_queue=fair_queue,
+    )
+    assert control_plane.cancel(item.request_id)
+    assert requests.get(item.request_id).status == RequestState.CANCELLED
+    assert fair_queue.depth() == 0

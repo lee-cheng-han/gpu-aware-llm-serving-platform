@@ -22,6 +22,7 @@ The deep axis is queueing and scheduling—not chatbot product features.
 - Supervised worker heartbeats and token-bounded local worker execution
 - Residency-aware, memory-safe, and estimated-completion placement policies
 - Coalesced model loading, warmup, memory reservations, and protected LRU idle eviction
+- API-key tenant identity, atomic quotas, weighted fairness, priority aging, and cancellation
 
 ## What This Project Is Not
 
@@ -64,6 +65,7 @@ Configuration is read from the environment:
 | `MODEL_REVISION` | `main` |
 | `SCHEDULER_POLICY` | `no_batching` |
 | `MAX_PROMPT_TOKENS` / `MAX_NEW_TOKENS` | `1024` / `128` |
+| `MAX_PROMPT_CHARACTERS` | `16384` |
 | `MAX_QUEUE_SIZE` / `MAX_CONCURRENT_REQUESTS` | `128` / `16` |
 | `REQUEST_TIMEOUT_SECONDS` | `60` |
 | `MAX_BATCH_SIZE` / `MAX_WAIT_MS` | `8` / `25` |
@@ -71,6 +73,8 @@ Configuration is read from the environment:
 | `MODEL_WARMUP_ON_START` | `false` |
 | `SHUTDOWN_GRACE_SECONDS` | `30` |
 | `METRICS_SAMPLE_LIMIT` | `10000` |
+| `API_KEYS` | empty (authentication disabled) |
+| `CORS_ALLOWED_ORIGINS` | empty (cross-origin access disabled) |
 
 ## API Usage
 
@@ -89,14 +93,23 @@ curl -N -X POST http://localhost:8000/v1/generate_stream \
 curl http://localhost:8000/metrics
 ```
 
-Invalid limits return 400, concurrent admission returns 429, a full queue returns 503,
-and expired generation requests return 504.
+Malformed or unsupported input returns 400, oversized prompt/context input returns 413,
+tenant or concurrent admission returns 429, unavailable capacity returns 503, and expired
+generation requests return 504. Configured authentication failures return 401.
 
 Errors use a stable `{"error":{"code","message","details"}}` envelope. `/health`
 reports process health; `/ready` returns 200 only after the model has loaded. Set
 `MODEL_WARMUP_ON_START=true` to load the model before accepting traffic. Prompt plus
 requested output tokens must fit the model's context window. Set `temperature` to `0`
 for deterministic greedy decoding.
+
+Set `API_KEYS` to comma-separated `tenant:key` entries to enable development
+authentication, for example `API_KEYS=research:key-one,interactive:key-two`. Generation
+requests must then send `Authorization: Bearer <key>`. Keys and full prompts are never
+logged. Request JSON accepts `priority` (`0`–`100`) and optional positive
+`deadline_seconds`; extra fields such as `tenant_id` are rejected.
+Set `CORS_ALLOWED_ORIGINS` to a comma-separated allowlist when browser access is required;
+wildcard origins and credentialed CORS are not enabled.
 
 The SSE path reserves concurrency before response headers are sent, counts generated model
 tokens independently of decoded text fragments, and always releases admission on success,

@@ -106,6 +106,15 @@ tracked. A deadline is rechecked after an uninterruptible runtime load.
 Connect the platform state machine to API requests, add authenticated tenant context,
 admission quotas, fairness, global cancellation, and deadline checks.
 
+Implemented: optional API-key authentication derives tenant identity from credentials;
+gateway requests are mirrored into the typed lifecycle store; priority and explicit
+deadlines are accepted without allowing body-supplied tenants; atomic global/per-tenant
+queue, concurrency, and token reservations have stable rejection codes; weighted deficit
+round robin prevents cross-tenant starvation while priority aging protects old low-priority
+work; cancellation covers global, worker-queued, and logically active requests; and runtime
+output after active cancellation is discarded. The multi-worker admission path remains a
+modular control-plane API until deployment wiring is introduced.
+
 ### Phase 7 — reliability and persistence
 
 Add heartbeat expiry, failed-worker reassignment rules, persistent request metadata, worker

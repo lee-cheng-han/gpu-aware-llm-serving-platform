@@ -1,10 +1,14 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class GenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     prompt: str
     max_new_tokens: int = Field(default=64, gt=0)
     temperature: float = Field(default=0.7, ge=0)
+    priority: int = Field(default=0, ge=0, le=100)
+    deadline_seconds: float | None = Field(default=None, gt=0)
 
 
 class GenerateResponse(BaseModel):
