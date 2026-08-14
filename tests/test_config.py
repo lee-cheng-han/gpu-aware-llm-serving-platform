@@ -27,3 +27,10 @@ def test_shutdown_and_metrics_settings_parse(monkeypatch):
     settings = Settings.from_env()
     assert settings.shutdown_grace_seconds == 12.5
     assert settings.metrics_sample_limit == 500
+
+
+def test_model_device_supports_explicit_cuda_index(monkeypatch):
+    monkeypatch.setenv("MODEL_DEVICE", "cuda:1")
+    assert Settings.from_env().model_device == "cuda:1"
+    with pytest.raises(ValueError, match="MODEL_DEVICE"):
+        replace(Settings(), model_device="gpu").validate()

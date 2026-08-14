@@ -26,3 +26,20 @@ Dynamic batching can improve throughput by amortizing model work while increasin
 through the batching window and padding. A throughput win with worse tail latency is a
 tradeoff, not an unconditional improvement. Tiny GPT-2 results may be noisy because host
 overhead dominates; use the sanity benchmark before selecting the final model.
+
+## Deterministic control-plane evaluation
+
+`python -m benchmark.run_simulated_evaluation --check` expands the versioned heterogeneous
+workload, schedules it through the real weighted fair queue, models worker availability and
+model-cache residency, and writes JSON, Markdown, and SVG output. Gates cover completed
+requests, deadline misses, simulated throughput, p95 latency, scheduler decision overhead,
+cache-hit rate, and weighted fairness.
+
+The request order, service model, and outcomes are deterministic. Scheduler decision time
+is a local CPU measurement and therefore uses a deliberately generous regression ceiling.
+This evaluation does not load PyTorch, perform inference, measure CUDA, or predict real GPU
+throughput. Its reports must retain the `deterministic_simulation_not_real_hardware` label.
+
+Real CPU/GPU reports must instead use the HTTP or direct-model runner and capture hardware,
+driver, CUDA, OS, Python, PyTorch, Transformers, model identifier and revision, scheduler
+configuration, workload, random seed, warm-up, and raw trials.

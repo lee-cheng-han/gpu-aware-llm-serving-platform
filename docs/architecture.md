@@ -124,6 +124,3 @@ the original deadline. Tenant-authenticated request status and cancellation rout
 metadata without exposing prompts, output, or another tenant's request existence.
 Records reconstructed from Redis are metadata-only and cannot be resubmitted after a full
 process restart unless a deployment supplies a separate encrypted payload store.
-
-See [the Phase 1 audit and migration plan](phase1_migration_plan.md) for the reuse map and
-activation sequence.

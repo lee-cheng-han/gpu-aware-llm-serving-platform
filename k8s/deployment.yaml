@@ -13,7 +13,15 @@ spec:
       labels:
         app: llm-inference
     spec:
+      automountServiceAccountToken: false
       terminationGracePeriodSeconds: 40
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: server
           image: gpu-aware-llm-serving-platform:local
@@ -21,8 +29,24 @@ spec:
           envFrom:
             - configMapRef:
                 name: llm-inference
+          env:
+            - name: HF_HOME
+              value: /cache/huggingface
+            - name: TMPDIR
+              value: /tmp
           ports:
             - containerPort: 8000
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 5
+            failureThreshold: 60
           readinessProbe:
             httpGet:
               path: /ready
@@ -42,3 +66,14 @@ spec:
             limits:
               cpu: "2"
               memory: 2Gi
+          volumeMounts:
+            - name: model-cache
+              mountPath: /cache
+            - name: temporary-files
+              mountPath: /tmp
+      volumes:
+        - name: model-cache
+          emptyDir: {}
+        - name: temporary-files
+          emptyDir:
+            sizeLimit: 256Mi

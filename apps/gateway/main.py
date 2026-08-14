@@ -66,7 +66,7 @@ def create_app(settings: Settings | None = None, worker=None) -> FastAPI:
         )
     app.state.settings = settings
     app.state.worker = worker or InferenceWorker(
-        settings.model_name, settings.model_revision
+        settings.model_name, settings.model_revision, settings.model_device
     )
     app.state.metrics = Metrics(settings.metrics_sample_limit)
     app.state.request_queue = RequestQueue(settings.max_queue_size)

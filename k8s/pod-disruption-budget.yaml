@@ -1,0 +1,10 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: llm-inference
+  namespace: llm-inference
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: llm-inference

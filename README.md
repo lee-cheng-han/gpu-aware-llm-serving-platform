@@ -1,5 +1,9 @@
 # GPU-Aware LLM Serving Platform
 
+> **Zero-cost default:** the project performs inference locally and does not call a paid
+> model API or provision cloud resources. Hosted CI is manual-only. Cloud runners, hosted
+> GPUs, managed inference services, and managed Kubernetes are intentionally not required.
+
 ## Overview
 
 A lean local FastAPI server for studying the systems tradeoff between serial request
@@ -65,6 +69,7 @@ Configuration is read from the environment:
 |---|---:|
 | `MODEL_NAME` | `sshleifer/tiny-gpt2` |
 | `MODEL_REVISION` | `main` |
+| `MODEL_DEVICE` | `cpu` (`cuda` or `cuda:<index>` in the CUDA image) |
 | `SCHEDULER_POLICY` | `no_batching` |
 | `MAX_PROMPT_TOKENS` / `MAX_NEW_TOKENS` | `1024` / `128` |
 | `MAX_PROMPT_CHARACTERS` | `16384` |
@@ -186,10 +191,20 @@ python benchmark/compare_schedulers.py --policy dynamic_batch \
 
 See [the full methodology](docs/benchmark_methodology.md).
 
+The deterministic control-plane evaluation exercises heterogeneous tenants, priorities,
+model residency, worker speeds, deadlines, and weighted fairness without loading a model:
+
+```bash
+make evaluation
+```
+
+It writes JSON, Markdown, and SVG artifacts under `benchmark/results/simulated/`. These are
+always labelled simulations and are regression signals, never hardware performance claims.
+
 ## Benchmark Results
 
-No measurements are committed yet. Populate this only with recorded runs and include the
-model, hardware, and settings.
+No real-device measurements are committed yet. Deterministic simulated results are kept in
+a separate directory and include their workload, seed, thresholds, and classification.
 
 | Model / hardware | Policy | p50 ms | p95 ms | req/s | tokens/s | avg batch |
 |---|---|---:|---:|---:|---:|---:|
@@ -202,6 +217,10 @@ model, hardware, and settings.
 docker build -t gpu-aware-llm-serving-platform:local .
 docker run --rm -p 8000:8000 gpu-aware-llm-serving-platform:local
 ```
+
+See [deployment profiles](deploy/README.md) for local CPU, deterministic simulation, and
+real CUDA examples. CUDA execution uses a separate image and never silently falls back to
+the CPU dependency set.
 
 ## Kubernetes
 
@@ -226,6 +245,7 @@ make install-dev
 make lint
 make typecheck
 make test
+make evaluation
 ```
 
 Normal tests never download a model. An explicit optional smoke test downloads and executes
@@ -235,5 +255,7 @@ Normal tests never download a model. An explicit optional smoke test downloads a
 make test-model
 ```
 
-GitHub Actions runs Python 3.12 tests, Ruff, selected mypy checks, compilation, and a
-non-pushing Docker build. The runtime remains local and uses no paid inference API.
+The manual GitHub Actions workflow runs Python 3.12 tests, Ruff, mypy, compilation,
+evaluation gates, dependency checks, and a non-pushing Docker build. It does not run on
+pushes or pull requests, preventing automatic hosted-runner consumption. The same checks
+can be run locally without a paid inference API.

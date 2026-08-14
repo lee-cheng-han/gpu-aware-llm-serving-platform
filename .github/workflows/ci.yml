@@ -1,12 +1,14 @@
 name: CI
 
+# Manual-only by design: this prevents repository activity from automatically consuming
+# billable GitHub-hosted runner minutes on private repositories.
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -18,10 +20,13 @@ jobs:
       - run: ruff check .
       - run: mypy
       - run: pytest -m "not model" -q
+      - run: python -m benchmark.run_simulated_evaluation --check --output-dir /tmp/evaluation
+      - run: python -m pip check
       - run: python -m compileall -q apps inference runtime scheduler serving_platform benchmark tests
 
   docker:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3

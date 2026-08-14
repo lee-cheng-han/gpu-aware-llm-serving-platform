@@ -1,0 +1,33 @@
+{
+  "name": "heterogeneous-tenants-and-models",
+  "seed": 42,
+  "fair_queue_quantum_tokens": 64,
+  "priority_aging_seconds": 1,
+  "tenants": [
+    {"tenant_id": "interactive", "weight": 2},
+    {"tenant_id": "batch", "weight": 1},
+    {"tenant_id": "research", "weight": 1}
+  ],
+  "models": {
+    "small": {"load_seconds": 0.4},
+    "large": {"load_seconds": 1.2}
+  },
+  "workers": [
+    {"worker_id": "sim-a", "tokens_per_second": 180, "max_resident_models": 2, "resident_models": ["small"]},
+    {"worker_id": "sim-b", "tokens_per_second": 120, "max_resident_models": 1, "resident_models": ["large"]}
+  ],
+  "request_groups": [
+    {"count": 12, "tenants": ["interactive"], "models": ["small"], "prompt_tokens": 24, "output_tokens": 24, "priorities": [80, 60], "deadline_seconds": 8},
+    {"count": 12, "tenants": ["batch"], "models": ["large", "small"], "prompt_tokens": 96, "output_tokens": 64, "priorities": [10], "deadline_seconds": 30},
+    {"count": 12, "tenants": ["research"], "models": ["small", "large"], "prompt_tokens": 48, "output_tokens": 32, "priorities": [30, 20], "deadline_seconds": 20}
+  ],
+  "gates": {
+    "min_completed_requests": 30,
+    "max_deadline_miss_ratio": 0.2,
+    "min_simulated_tokens_per_second": 80,
+    "max_p95_latency_ms": 30000,
+    "max_scheduler_decision_p95_us": 5000,
+    "min_cache_hit_rate": 0.7,
+    "min_weighted_fairness": 0.85
+  }
+}

@@ -1,0 +1,24 @@
+FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y python3 python3-pip ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY requirements-core.txt requirements-cuda.txt ./
+RUN python3 -m pip install --break-system-packages --no-cache-dir -r requirements-cuda.txt
+RUN useradd --create-home --uid 10001 appuser
+ENV HF_HOME=/home/appuser/.cache/huggingface MODEL_DEVICE=cuda:0
+RUN mkdir -p "$HF_HOME" && chown -R appuser:appuser /home/appuser /app
+COPY --chown=appuser:appuser apps apps
+COPY --chown=appuser:appuser inference inference
+COPY --chown=appuser:appuser runtime runtime
+COPY --chown=appuser:appuser scheduler scheduler
+COPY --chown=appuser:appuser serving_platform serving_platform
+USER appuser
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD ["python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+CMD ["python3", "-m", "uvicorn", "apps.gateway.main:app", "--host", "0.0.0.0", "--port", "8000"]
