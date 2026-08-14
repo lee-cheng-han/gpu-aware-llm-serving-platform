@@ -30,9 +30,10 @@ queue insertion. Blocking model calls run outside the event loop. Streaming and 
 generation share one execution lock, so the one-worker experiment never overlaps model
 calls.
 
-This remains a modular monolith. Global scheduling and multi-worker dispatch are executable
-as control-plane components, but the public FastAPI routes intentionally remain on the
-proven single-worker path until admission, tenant identity, and model lifecycle are wired.
+This remains a modular monolith. Global scheduling, tenant admission, model lifecycle, and
+multi-worker dispatch are executable control-plane components, but the public generation
+routes intentionally remain on the proven single-worker path until an opt-in end-to-end
+control-plane deployment profile is wired.
 
 ## Worker-ready module boundaries
 
@@ -47,7 +48,7 @@ serving_platform/       (`platform` would shadow Python's standard-library modul
   admission/           admission contract
   lifecycle/           validated transition service
   registry/            worker registry contract and in-memory implementation
-  request_state/       request-state persistence contract
+  request_state/       request-state contract plus in-memory and Redis-compatible stores
   routing/             routing policy and explanation contract
   scheduling/          local scheduler contract
   telemetry/           bounded-cardinality telemetry contract
@@ -86,9 +87,12 @@ loop.
 
 ## State and process boundaries
 
-Today all state is in one process and is lost on restart. Workers now register and publish
-health, queue, active-batch, residency, throughput, drain, and capacity snapshots. Stale
-heartbeats are marked unhealthy, and recovery requires re-registration. CUDA capacity uses
+The default application uses process-local state. A Redis-compatible adapter can durably
+store request metadata, lifecycle transitions, assignment, attempts, and retry reasons
+without persisting prompts or outputs. Workers register and publish health, queue,
+active-batch, residency, throughput, drain, and capacity snapshots. A reliability
+supervisor expires stale heartbeats and invokes recovery; recovery requires worker
+re-registration. CUDA capacity uses
 PyTorch device APIs when CUDA is available; the deterministic simulated runtime models
 memory, load delay, throughput, batching efficiency, and controlled failures without
 claiming real inference. Round-robin and least-queue global policies now filter worker
@@ -111,6 +115,15 @@ atomically. Admitted requests enter a weighted deficit round-robin queue; tenant
 controls quantum, priority chooses within a tenant, and wait-time aging prevents old
 low-priority work from starving. The in-memory request store uses isolated snapshots and
 tracks the explicit lifecycle without logging prompts or generated text.
+
+Recovery is deliberately at-most-once for work that may have started: only assigned work
+with no running or streaming transition can return to the fair global queue. Started work
+fails when its worker is lost because the control plane cannot prove that execution stopped.
+Retries retain attempt counts, record reasons, and obey both a maximum attempt budget and
+the original deadline. Tenant-authenticated request status and cancellation routes expose
+metadata without exposing prompts, output, or another tenant's request existence.
+Records reconstructed from Redis are metadata-only and cannot be resubmitted after a full
+process restart unless a deployment supplies a separate encrypted payload store.
 
 See [the Phase 1 audit and migration plan](phase1_migration_plan.md) for the reuse map and
 activation sequence.

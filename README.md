@@ -23,12 +23,14 @@ The deep axis is queueing and scheduling—not chatbot product features.
 - Residency-aware, memory-safe, and estimated-completion placement policies
 - Coalesced model loading, warmup, memory reservations, and protected LRU idle eviction
 - API-key tenant identity, atomic quotas, weighted fairness, priority aging, and cancellation
+- Supervised stale-worker recovery with bounded, reason-coded retries for unstarted work
+- Redis-compatible, prompt-redacting request metadata persistence and tenant-scoped status APIs
 
 ## What This Project Is Not
 
 - Not “mini-vLLM,” PagedAttention, continuous batching, or a vLLM/TGI/Triton replacement
-- The gateway is not yet multi-worker, multi-model, distributed, production-scale, or
-  multi-tenant; simulated GPU results are never real-device measurements
+- The default gateway execution path is not yet distributed or production-scale; simulated
+  GPU results are never real-device measurements
 - Not batched interleaved streaming or a custom KV-cache implementation
 
 This project is not a replacement for vLLM, TGI, or Triton. It does not implement
@@ -91,6 +93,10 @@ curl -N -X POST http://localhost:8000/v1/generate_stream \
   -d '{"prompt":"Explain PCIe simply.","max_new_tokens":32,"temperature":0.7}'
 
 curl http://localhost:8000/metrics
+
+# Use the request_id returned by a generation call.
+curl http://localhost:8000/v1/requests/<request_id>
+curl -X DELETE http://localhost:8000/v1/requests/<request_id>
 ```
 
 Malformed or unsupported input returns 400, oversized prompt/context input returns 413,
@@ -106,7 +112,8 @@ for deterministic greedy decoding.
 Set `API_KEYS` to comma-separated `tenant:key` entries to enable development
 authentication, for example `API_KEYS=research:key-one,interactive:key-two`. Generation
 requests must then send `Authorization: Bearer <key>`. Keys and full prompts are never
-logged. Request JSON accepts `priority` (`0`–`100`) and optional positive
+logged; configured key material is held as SHA-256 digests for constant-time verification.
+Request JSON accepts `priority` (`0`–`100`) and optional positive
 `deadline_seconds`; extra fields such as `tenant_id` are rejected.
 Set `CORS_ALLOWED_ORIGINS` to a comma-separated allowlist when browser access is required;
 wildcard origins and credentialed CORS are not enabled.
@@ -207,9 +214,10 @@ streaming, CPU-only, and single-worker semantics.
 
 ## Future Work
 
-API keys, tenant-aware/Redis-backed limits, Prometheus/Grafana, multi-worker routing, GPU
-serving, real continuous batching, cancellation, sampling-parameter bucketing, and
-batched streaming are intentionally future work.
+The remaining production work includes wiring the control plane into the default gateway
+execution path, distributed admission accounting, Prometheus/OpenTelemetry export,
+idempotency keys, atomic placement reservations, real GPU evaluation, continuous batching,
+sampling-parameter bucketing, and batched streaming.
 
 ## Development Checks
 

@@ -28,10 +28,12 @@ clearer compute-heavy comparison. Final reports must state the exact model and h
 One worker isolates batching policy as the independent variable. Multiple workers add
 routing, CPU oversubscription, and model-memory duplication.
 
-## Why no Redis
+## Why Redis is an adapter, not a required service
 
-The queue and metrics are process-local by design. Redis would only add deployment and
-failure modes to a one-process experiment.
+The default queue and metrics remain process-local so the original experiment runs without
+infrastructure. The platform layer provides a Redis-compatible request metadata adapter for
+restart persistence, but deliberately leaves client construction and Redis deployment to
+the operator. Prompts and outputs are excluded by default to limit sensitive-data exposure.
 
 ## Why no full API authentication or per-user rate limits
 
@@ -81,7 +83,8 @@ local packaging, not elasticity or high availability.
 
 ## What would change in a production version
 
-A production system needs authentication, tenant-aware admission control, durable or
-distributed telemetry, structured logging, model warm-up/readiness, cancellation-aware
-generation, multi-worker routing, and GPU-native continuous batching. Prometheus,
-Grafana, autoscaling, and careful overload behavior would follow measured requirements.
+A production system still needs distributed admission transactions, durable queue claims,
+leader coordination, secret-manager-backed key rotation, distributed telemetry, structured
+logging, cancellation-aware generation, and GPU-native continuous batching. Prometheus,
+Grafana, tracing, autoscaling, and careful overload behavior would follow measured
+requirements.

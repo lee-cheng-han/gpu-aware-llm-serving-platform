@@ -41,9 +41,24 @@
 - Admission reservations are released idempotently at terminal handling. Tenant queue,
   concurrency, and token limits are changed under one lock so concurrent admissions cannot
   oversubscribe them.
+- A reliability supervisor periodically expires stale workers and removes their local
+  dispatch handles. Assigned requests that have never entered `RUNNING` or `STREAMING` may
+  return to the global fair queue while retaining their attempt count.
+- Requests that started or streamed are never automatically retried after worker loss; they
+  fail to avoid duplicate inference. Retry budget exhaustion fails the request, while an
+  expired original deadline produces `TIMED_OUT`. Every recovery decision records a reason.
+- The Redis-compatible request store persists lifecycle metadata across process restarts.
+  Prompts are replaced with a redaction marker and generated output is never stored. A
+  reconstructed record is marked as lacking executable payload and fails clearly instead
+  of accidentally scheduling the marker as a prompt.
+- Request lookup is tenant-scoped. Missing requests and requests owned by another tenant
+  both return the same not-found response so the endpoint does not leak request existence.
 
 ## Not implemented yet
 
-There is no crash reassignment, persistent request state, or control-plane recovery yet.
-Those semantics must be implemented and tested before multi-worker mode is advertised.
-Partially streamed requests will never be retried automatically.
+The default FastAPI generation path does not yet run through the multi-worker control plane,
+and its default request store remains in memory. Redis client construction, deployment,
+high availability, and migrations are operator concerns; the repository supplies the
+adapter rather than running Redis. Recovery updates are not a distributed transaction with
+queue insertion, so a production deployment still needs atomic persistence/queue claiming
+and leader coordination. Partially streamed requests are intentionally never retried.

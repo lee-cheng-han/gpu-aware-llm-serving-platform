@@ -36,9 +36,15 @@ class WeightedFairRequestQueue:
             queue = self._queues.get(request.tenant_id)
             if queue is None:
                 raise ValueError(f"tenant is not configured: {request.tenant_id}")
-            if request.status != RequestState.ADMITTED:
-                raise ValueError("only admitted requests enter the global fair queue")
-            request.transition(RequestState.QUEUED, self._clock())
+            if request.status not in {RequestState.ADMITTED, RequestState.QUEUED}:
+                raise ValueError("only admitted or retry-queued requests enter the global fair queue")
+            if any(
+                existing.request_id == request.request_id
+                for existing in queue
+            ):
+                raise ValueError(f"request is already queued: {request.request_id}")
+            if request.status == RequestState.ADMITTED:
+                request.transition(RequestState.QUEUED, self._clock())
             queue.append(request)
             if request.tenant_id not in self._active:
                 self._active.append(request.tenant_id)

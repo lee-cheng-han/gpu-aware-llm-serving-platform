@@ -185,6 +185,8 @@ class RequestRecord:
     status: RequestState = RequestState.RECEIVED
     assigned_worker_id: str | None = None
     attempt_count: int = 0
+    retry_reasons: list[str] = field(default_factory=list)
+    payload_available: bool = True
     transition_timestamps: dict[RequestState, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 from dataclasses import dataclass
+from hashlib import sha256
 
 from fastapi import Request
 
@@ -17,9 +18,13 @@ class ApiKeyAuthenticator:
     """Development authentication; secrets are compared but never returned or logged."""
 
     def __init__(self, credentials: dict[str, str] | None = None):
-        self._credentials = dict(credentials or {})
-        if any(not tenant or not key for key, tenant in self._credentials.items()):
+        credentials = dict(credentials or {})
+        if any(not tenant or not key for key, tenant in credentials.items()):
             raise ValueError("API keys and tenant identifiers must be non-empty")
+        self._credentials = tuple(
+            (sha256(key.encode()).digest(), tenant_id)
+            for key, tenant_id in credentials.items()
+        )
 
     @property
     def enabled(self) -> bool:
@@ -32,8 +37,9 @@ class ApiKeyAuthenticator:
         scheme, _, supplied = authorization.partition(" ")
         if scheme.lower() != "bearer" or not supplied:
             raise APIError(401, "authentication_required", "a bearer API key is required")
-        for key, tenant_id in self._credentials.items():
-            if hmac.compare_digest(supplied, key):
+        supplied_digest = sha256(supplied.encode()).digest()
+        for key_digest, tenant_id in self._credentials:
+            if hmac.compare_digest(supplied_digest, key_digest):
                 return TenantIdentity(tenant_id)
         raise APIError(401, "invalid_api_key", "the API key is invalid")
 

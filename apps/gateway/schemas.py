@@ -28,3 +28,14 @@ class ReadinessResponse(BaseModel):
     model_name: str
     model_loaded: bool
     context_window_tokens: int | None = None
+
+
+class RequestStatusResponse(BaseModel):
+    request_id: str
+    model_id: str
+    status: str
+    assigned_worker_id: str | None
+    attempt_count: int
+    priority: int
+    retry_reasons: list[str]
+    transition_timestamps: dict[str, float]

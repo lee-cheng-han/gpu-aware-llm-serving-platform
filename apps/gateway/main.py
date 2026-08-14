@@ -61,7 +61,7 @@ def create_app(settings: Settings | None = None, worker=None) -> FastAPI:
             CORSMiddleware,
             allow_origins=origins,
             allow_credentials=False,
-            allow_methods=["GET", "POST"],
+            allow_methods=["GET", "POST", "DELETE"],
             allow_headers=["Authorization", "Content-Type"],
         )
     app.state.settings = settings
@@ -74,6 +74,7 @@ def create_app(settings: Settings | None = None, worker=None) -> FastAPI:
     app.state.stream_tracker = StreamTracker()
     app.state.authenticator = ApiKeyAuthenticator(parse_api_keys(settings.api_keys))
     app.state.platform_requests = InMemoryRequestStateStore()
+    app.state.active_gateway_requests = {}
     app.include_router(router)
 
     @app.exception_handler(RequestValidationError)

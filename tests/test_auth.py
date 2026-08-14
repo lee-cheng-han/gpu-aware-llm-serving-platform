@@ -68,6 +68,7 @@ async def test_cors_allows_only_configured_origin():
             },
         )
     assert allowed.headers["access-control-allow-origin"] == "https://console.example"
+    assert "DELETE" in allowed.headers["access-control-allow-methods"]
     assert "access-control-allow-origin" not in denied.headers
 
 

@@ -97,3 +97,51 @@ class ControlPlane:
             request.transition(RequestState.CANCELLED)
             self.requests.save(request)
         return cancelled
+
+    def recover_failed_worker(self, worker_id: str, max_attempts: int) -> dict[str, int]:
+        if max_attempts <= 0:
+            raise ValueError("maximum attempts must be positive")
+        if self.requests is None:
+            raise RuntimeError("request state store is required for worker recovery")
+        self.workers.remove(worker_id)
+        recovered = failed = untouched = 0
+        for request in self.requests.list():
+            if request.assigned_worker_id != worker_id or request.terminal:
+                untouched += 1
+                continue
+            started = RequestState.RUNNING in request.transition_timestamps
+            streamed = RequestState.STREAMING in request.transition_timestamps
+            if request.status in {RequestState.RUNNING, RequestState.STREAMING} or started or streamed:
+                request.transition(RequestState.FAILED)
+                request.retry_reasons.append("worker_lost_after_execution_started")
+                failed += 1
+            elif not request.payload_available:
+                request.transition(RequestState.FAILED)
+                request.retry_reasons.append("request_payload_unavailable_after_restart")
+                failed += 1
+            elif request.attempt_count >= max_attempts or request.deadline <= self.scheduler.now():
+                target = (
+                    RequestState.TIMED_OUT
+                    if request.deadline <= self.scheduler.now()
+                    else RequestState.FAILED
+                )
+                request.transition(target)
+                request.retry_reasons.append(
+                    "deadline_exhausted" if target == RequestState.TIMED_OUT
+                    else "retry_budget_exhausted"
+                )
+                failed += 1
+            else:
+                if request.status == RequestState.ASSIGNED:
+                    request.transition(RequestState.QUEUED)
+                request.assigned_worker_id = None
+                request.retry_reasons.append("assigned_worker_heartbeat_expired")
+                if self.global_queue is None:
+                    request.transition(RequestState.FAILED)
+                    request.retry_reasons.append("global_retry_queue_unavailable")
+                    failed += 1
+                else:
+                    self.global_queue.enqueue(request)
+                    recovered += 1
+            self.requests.save(request)
+        return {"requeued": recovered, "failed": failed, "untouched": untouched}

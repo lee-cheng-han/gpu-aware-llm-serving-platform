@@ -7,7 +7,12 @@ from fastapi.responses import StreamingResponse
 
 from apps.gateway.errors import APIError
 from apps.gateway.limits import validate_request
-from apps.gateway.schemas import GenerateRequest, GenerateResponse, ReadinessResponse
+from apps.gateway.schemas import (
+    GenerateRequest,
+    GenerateResponse,
+    ReadinessResponse,
+    RequestStatusResponse,
+)
 from scheduler.queue import QueueClosed
 from scheduler.request import InferenceRequest, RequestStatus
 from serving_platform.domain import RequestRecord, RequestState
@@ -64,6 +69,24 @@ def _finish_platform_request(
             record.transition(RequestState.RUNNING, started_at)
         record.transition(target)
     state.platform_requests.save(record)
+    if record.terminal:
+        state.active_gateway_requests.pop(record.request_id, None)
+
+
+def _status_response(record: RequestRecord) -> RequestStatusResponse:
+    return RequestStatusResponse(
+        request_id=record.request_id,
+        model_id=record.model_id,
+        status=record.status.value,
+        assigned_worker_id=record.assigned_worker_id,
+        attempt_count=record.attempt_count,
+        priority=record.priority,
+        retry_reasons=list(record.retry_reasons),
+        transition_timestamps={
+            state.value: timestamp
+            for state, timestamp in record.transition_timestamps.items()
+        },
+    )
 
 
 def _response(item: InferenceRequest) -> GenerateResponse:
@@ -154,6 +177,7 @@ async def generate(body: GenerateRequest, request: Request):
                 state.settings.request_timeout_seconds,
             )
             state.platform_requests.create(platform_record)
+            state.active_gateway_requests[item.request_id] = item
             try:
                 await state.request_queue.submit(item)
             except QueueClosed:
@@ -254,6 +278,7 @@ async def generate_stream(body: GenerateRequest, request: Request):
     platform_record.stream = True
     platform_record.transition(RequestState.RUNNING)
     state.platform_requests.create(platform_record)
+    state.active_gateway_requests[item.request_id] = item
 
     async def events():
         try:
@@ -301,6 +326,32 @@ async def generate_stream(body: GenerateRequest, request: Request):
             _finish_platform_request(state, platform_record, item.status)
 
     return StreamingResponse(events(), media_type="text/event-stream")
+
+
+@router.get("/v1/requests/{request_id}", response_model=RequestStatusResponse)
+async def request_status(request_id: str, request: Request):
+    identity = request.app.state.authenticator.authenticate(request)
+    record = request.app.state.platform_requests.get(request_id)
+    if record is None or record.tenant_id != identity.tenant_id:
+        raise APIError(404, "request_not_found", "request was not found")
+    return _status_response(record)
+
+
+@router.delete("/v1/requests/{request_id}", response_model=RequestStatusResponse)
+async def cancel_request(request_id: str, request: Request):
+    state = request.app.state
+    identity = state.authenticator.authenticate(request)
+    record = state.platform_requests.get(request_id)
+    if record is None or record.tenant_id != identity.tenant_id:
+        raise APIError(404, "request_not_found", "request was not found")
+    if record.terminal:
+        raise APIError(409, "request_already_terminal", "request is already terminal")
+    item = state.active_gateway_requests.get(request_id)
+    if item is None:
+        raise APIError(409, "request_not_cancellable", "request cannot be cancelled")
+    item.cancel("cancelled through request API")
+    _finish_platform_request(state, record, item.status, item.started_at or None)
+    return _status_response(record)
 
 
 @router.get("/metrics")
