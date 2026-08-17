@@ -41,6 +41,7 @@ class Settings:
     metrics_sample_limit: int = 10_000
     api_keys: str = ""
     cors_allowed_origins: str = ""
+    platform_api_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -65,6 +66,7 @@ class Settings:
             metrics_sample_limit=_env("METRICS_SAMPLE_LIMIT", 10_000, int),
             api_keys=_env("API_KEYS", "", str),
             cors_allowed_origins=_env("CORS_ALLOWED_ORIGINS", "", str),
+            platform_api_enabled=_bool_env("PLATFORM_API_ENABLED", False),
         )
 
     def validate(self) -> None:

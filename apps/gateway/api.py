@@ -5,6 +5,7 @@ import time
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from apps.control_plane import PlatformAdmissionError, PlatformExecutionError
 from apps.gateway.errors import APIError
 from apps.gateway.limits import validate_request
 from apps.gateway.schemas import (
@@ -97,6 +98,24 @@ def _response(item: InferenceRequest) -> GenerateResponse:
         queue_wait_ms=(item.started_at - item.queued_at) * 1000 if item.started_at else 0,
         scheduler_policy=item.scheduler_policy, batch_size=item.batch_size,
         status=item.status.value,
+    )
+
+
+def _platform_response(execution) -> GenerateResponse:
+    record = execution.request
+    queued_at = record.transition_timestamps[RequestState.QUEUED]
+    started_at = record.transition_timestamps[RequestState.RUNNING]
+    completed_at = record.transition_timestamps[RequestState.COMPLETED]
+    return GenerateResponse(
+        request_id=record.request_id,
+        text=execution.result.text,
+        input_tokens=execution.result.input_tokens,
+        output_tokens=execution.result.output_tokens,
+        latency_ms=(completed_at - record.created_at) * 1000,
+        queue_wait_ms=(started_at - queued_at) * 1000,
+        scheduler_policy=execution.scheduler_policy,
+        batch_size=execution.batch_size,
+        status=record.status.value.upper(),
     )
 
 
@@ -225,6 +244,49 @@ async def generate(body: GenerateRequest, request: Request):
                     reason=code or "http_error",
                 )
         raise
+
+
+@router.post("/v1/platform/generate", response_model=GenerateResponse)
+async def platform_generate(body: GenerateRequest, request: Request):
+    """Opt-in complete control-plane path backed by deterministic local workers."""
+    state = request.app.state
+    pipeline = state.platform_pipeline
+    if pipeline is None:
+        raise APIError(404, "platform_api_disabled", "the control-plane API is disabled")
+    identity = state.authenticator.authenticate(request)
+    if not body.prompt.strip():
+        raise APIError(400, "empty_prompt", "prompt must not be empty")
+    if len(body.prompt) > state.settings.max_prompt_characters:
+        raise APIError(
+            413,
+            "prompt_size_exceeded",
+            "prompt exceeds the configured character limit",
+            {"max_prompt_characters": state.settings.max_prompt_characters},
+        )
+    prompt_tokens = pipeline.count_prompt_tokens(body.prompt)
+    validate_request(
+        body.prompt,
+        body.max_new_tokens,
+        prompt_tokens,
+        pipeline.model.max_context_tokens,
+        state.settings,
+    )
+    try:
+        execution = await pipeline.submit(
+            identity.tenant_id,
+            body.prompt,
+            prompt_tokens,
+            body.max_new_tokens,
+            body.temperature,
+            body.priority,
+            body.deadline_seconds or state.settings.request_timeout_seconds,
+        )
+    except PlatformAdmissionError as exc:
+        status = 503 if exc.code in {"global_queue_full", "no_healthy_capacity"} else 429
+        raise APIError(status, exc.code, str(exc)) from exc
+    except PlatformExecutionError as exc:
+        raise APIError(503, "platform_execution_failed", str(exc)) from exc
+    return _platform_response(execution)
 
 
 @router.post("/v1/generate_stream")

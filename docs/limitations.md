@@ -1,9 +1,8 @@
 # Limitations
 
-- The public gateway still executes through one local CPU Hugging Face worker until global
-  routing is connected.
-- CPU, CUDA, and simulated workers can be globally assigned and dispatched in the modular
-  control plane, but that path is not active in the public API yet.
+- The compatibility API still executes through one local Hugging Face worker. The opt-in
+  platform API exercises global routing with deterministic local simulated workers, but
+  worker handles remain process-local rather than using a network transport.
 - Heartbeat expiry and recovery are supervised, but registry state and leadership remain
   process-local.
 - Tenant admission and fairness are in-memory control-plane components; the public API still

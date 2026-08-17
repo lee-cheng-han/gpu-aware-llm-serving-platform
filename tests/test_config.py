@@ -34,3 +34,9 @@ def test_model_device_supports_explicit_cuda_index(monkeypatch):
     assert Settings.from_env().model_device == "cuda:1"
     with pytest.raises(ValueError, match="MODEL_DEVICE"):
         replace(Settings(), model_device="gpu").validate()
+
+
+def test_platform_api_is_opt_in(monkeypatch):
+    assert Settings.from_env().platform_api_enabled is False
+    monkeypatch.setenv("PLATFORM_API_ENABLED", "true")
+    assert Settings.from_env().platform_api_enabled is True

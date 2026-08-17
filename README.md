@@ -82,6 +82,7 @@ Configuration is read from the environment:
 | `METRICS_SAMPLE_LIMIT` | `10000` |
 | `API_KEYS` | empty (authentication disabled) |
 | `CORS_ALLOWED_ORIGINS` | empty (cross-origin access disabled) |
+| `PLATFORM_API_ENABLED` | `false` (opt-in deterministic control-plane API) |
 
 ## API Usage
 
@@ -103,6 +104,13 @@ curl http://localhost:8000/metrics
 curl http://localhost:8000/v1/requests/<request_id>
 curl -X DELETE http://localhost:8000/v1/requests/<request_id>
 ```
+
+Set `PLATFORM_API_ENABLED=true` to expose `POST /v1/platform/generate`. This opt-in route
+executes authentication, tenant admission, weighted fair queueing, placement, cold model
+loading, worker-local batching, lifecycle persistence, and terminal response conversion
+through two deterministic local simulated workers. It returns the same `GenerateResponse`
+schema as `/v1/generate`, performs no remote inference, and does not replace the compatibility
+route.
 
 Malformed or unsupported input returns 400, oversized prompt/context input returns 413,
 tenant or concurrent admission returns 429, unavailable capacity returns 503, and expired
@@ -233,8 +241,8 @@ streaming, CPU-only, and single-worker semantics.
 
 ## Future Work
 
-The remaining production work includes wiring the control plane into the default gateway
-execution path, distributed admission accounting, Prometheus/OpenTelemetry export,
+The remaining production work includes independent worker transport, distributed admission
+accounting, Prometheus/OpenTelemetry export,
 idempotency keys, atomic placement reservations, real GPU evaluation, continuous batching,
 sampling-parameter bucketing, and batched streaming.
 

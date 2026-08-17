@@ -8,6 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from apps.control_plane import build_local_simulated_pipeline
 from apps.gateway.api import router
 from apps.gateway.auth import ApiKeyAuthenticator, parse_api_keys
 from apps.gateway.config import Settings
@@ -21,7 +22,7 @@ from serving_platform.request_state import InMemoryRequestStateStore
 logger = logging.getLogger(__name__)
 
 
-def create_app(settings: Settings | None = None, worker=None) -> FastAPI:
+def create_app(settings: Settings | None = None, worker=None, platform_pipeline=None) -> FastAPI:
     settings = settings or Settings.from_env()
     settings.validate()
 
@@ -72,9 +73,20 @@ def create_app(settings: Settings | None = None, worker=None) -> FastAPI:
     app.state.request_queue = RequestQueue(settings.max_queue_size)
     app.state.limiter = ConcurrencyLimiter(settings.max_concurrent_requests)
     app.state.stream_tracker = StreamTracker()
-    app.state.authenticator = ApiKeyAuthenticator(parse_api_keys(settings.api_keys))
+    credentials = parse_api_keys(settings.api_keys)
+    app.state.authenticator = ApiKeyAuthenticator(credentials)
     app.state.platform_requests = InMemoryRequestStateStore()
     app.state.active_gateway_requests = {}
+    app.state.platform_pipeline = platform_pipeline
+    if settings.platform_api_enabled and platform_pipeline is None:
+        app.state.platform_pipeline = build_local_simulated_pipeline(
+            app.state.platform_requests,
+            set(credentials.values()) or {"default"},
+            settings.max_queue_size,
+            settings.max_concurrent_requests,
+            settings.max_prompt_tokens + settings.max_new_tokens,
+            settings.max_total_batch_tokens,
+        )
     app.include_router(router)
 
     @app.exception_handler(RequestValidationError)

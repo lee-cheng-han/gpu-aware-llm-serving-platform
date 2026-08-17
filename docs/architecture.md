@@ -30,10 +30,10 @@ queue insertion. Blocking model calls run outside the event loop. Streaming and 
 generation share one execution lock, so the one-worker experiment never overlaps model
 calls.
 
-This remains a modular monolith. Global scheduling, tenant admission, model lifecycle, and
-multi-worker dispatch are executable control-plane components, but the public generation
-routes intentionally remain on the proven single-worker path until an opt-in end-to-end
-control-plane deployment profile is wired.
+This remains a modular monolith. The compatibility generation routes retain the proven
+single-worker path. When `PLATFORM_API_ENABLED=true`, `/v1/platform/generate` executes the
+complete gateway-to-control-plane path through deterministic local simulated workers. The
+next boundary is replacing process-local worker handles with an authenticated transport.
 
 ## Worker-ready module boundaries
 
@@ -65,7 +65,8 @@ than its registered model before loading, preventing arbitrary user-controlled m
 
 ## Two-level control-plane flow
 
-The platform layer now executes this flow in deterministic integration tests:
+The platform layer now executes this flow through an opt-in API and deterministic integration
+tests:
 
 ```text
 gateway -> authentication -> admission -> global scheduler
