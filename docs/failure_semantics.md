@@ -53,6 +53,10 @@
   of accidentally scheduling the marker as a prompt.
 - Request lookup is tenant-scoped. Missing requests and requests owned by another tenant
   both return the same not-found response so the endpoint does not leak request existence.
+- Local HTTP worker calls have bounded timeouts. Authentication failures, connection
+  failures, invalid worker identity, and non-success responses become transport errors;
+  rejected handoffs return the request to global `QUEUED` state under the same rules as an
+  in-process worker rejection.
 
 ## Not implemented yet
 

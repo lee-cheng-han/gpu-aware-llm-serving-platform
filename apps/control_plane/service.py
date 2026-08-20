@@ -3,7 +3,7 @@ from __future__ import annotations
 from threading import RLock
 
 from apps.control_plane.scheduler import GlobalScheduler
-from apps.worker import ManagedWorker
+from apps.worker import Worker
 from serving_platform.domain import Assignment, RequestRecord, RequestState
 from serving_platform.registry.interfaces import ModelRegistry
 from serving_platform.request_state.interfaces import RequestStateStore
@@ -18,10 +18,10 @@ class WorkerDirectory:
     """Process-local handles corresponding to worker-registry state snapshots."""
 
     def __init__(self) -> None:
-        self._workers: dict[str, ManagedWorker] = {}
+        self._workers: dict[str, Worker] = {}
         self._lock = RLock()
 
-    def add(self, worker: ManagedWorker) -> None:
+    def add(self, worker: Worker) -> None:
         with self._lock:
             self._workers[worker.worker_id] = worker
 
@@ -29,7 +29,7 @@ class WorkerDirectory:
         with self._lock:
             self._workers.pop(worker_id, None)
 
-    def get(self, worker_id: str) -> ManagedWorker | None:
+    def get(self, worker_id: str) -> Worker | None:
         with self._lock:
             return self._workers.get(worker_id)
 
@@ -57,7 +57,10 @@ class ControlPlane:
         try:
             if worker is None:
                 raise WorkerDispatchError("selected worker is no longer reachable")
-            if not worker.runtime.is_model_loaded(request.model_id):
+            snapshot = self.scheduler.registry.get(assignment.worker_id)
+            if snapshot is None:
+                raise WorkerDispatchError("selected worker is no longer registered")
+            if request.model_id not in snapshot.resident_models:
                 if self.models is None:
                     raise WorkerDispatchError("selected worker does not host the model")
                 model = self.models.get(request.model_id)

@@ -32,16 +32,18 @@ calls.
 
 This remains a modular monolith. The compatibility generation routes retain the proven
 single-worker path. When `PLATFORM_API_ENABLED=true`, `/v1/platform/generate` executes the
-complete gateway-to-control-plane path through deterministic local simulated workers. The
-next boundary is replacing process-local worker handles with an authenticated transport.
+complete gateway-to-control-plane path through deterministic in-process simulated workers.
+The same control-plane interface can now address authenticated HTTP worker handles in
+independent local processes; a process-level integration test proves cold loading, dispatch,
+execution, and lifecycle synchronization across that boundary.
 
 ## Worker-ready module boundaries
 
 ```text
 apps/
   gateway/             stable FastAPI entry point
-  control_plane/       global assignment and process-local worker dispatch
-  worker/              managed worker lifecycle and device-specific workers
+  control_plane/       global assignment and worker-handle dispatch
+  worker/              managed lifecycle, HTTP contract, and runtime-specific workers
 
 serving_platform/       (`platform` would shadow Python's standard-library module)
   domain/              typed models and request state machine data
@@ -74,6 +76,10 @@ gateway -> authentication -> admission -> global scheduler
                                       |-> worker registry
                                       |-> request state store
                                       v
+                     selected worker handle
+                         |          |
+                  in-process    authenticated HTTP
+                         |          |
                      selected worker local queue
                                       v
                            local dynamic batching
@@ -125,3 +131,17 @@ the original deadline. Tenant-authenticated request status and cancellation rout
 metadata without exposing prompts, output, or another tenant's request existence.
 Records reconstructed from Redis are metadata-only and cannot be resubmitted after a full
 process restart unless a deployment supplies a separate encrypted payload store.
+
+## Local worker transport
+
+`HttpWorkerClient` implements the same worker protocol as `ManagedWorker`, so placement is
+independent of process location. It sends authenticated strict JSON over loopback for
+registration, heartbeat, health, capacity, model lifecycle, request handoff, batch
+execution, cancellation, drain, and shutdown operations. Worker snapshots and request
+lifecycle changes are merged back into the control-plane-owned objects after each call.
+
+The server requires `X-Worker-Token` on every internal endpoint and compares it in constant
+time. Model loads accept only the worker's pre-registered full model definition. This is a
+development transport, not a public security boundary: it has bounded client timeouts but
+does not yet add TLS, token rotation, asynchronous multiplexing, service discovery, or a
+durable message broker.

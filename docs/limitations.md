@@ -1,8 +1,11 @@
 # Limitations
 
 - The compatibility API still executes through one local Hugging Face worker. The opt-in
-  platform API exercises global routing with deterministic local simulated workers, but
-  worker handles remain process-local rather than using a network transport.
+  platform API exercises global routing with deterministic in-process simulated workers.
+  Authenticated local HTTP worker handles are implemented and process-tested, but are not
+  yet selected from gateway configuration or intended for untrusted networks.
+- The worker HTTP transport has authentication and bounded timeouts, but no TLS, service
+  discovery, token rotation, durable delivery, or asynchronous connection pooling.
 - Heartbeat expiry and recovery are supervised, but registry state and leadership remain
   process-local.
 - Tenant admission and fairness are in-memory control-plane components; the public API still

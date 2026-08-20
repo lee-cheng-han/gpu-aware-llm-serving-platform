@@ -29,6 +29,7 @@ The deep axis is queueing and scheduling—not chatbot product features.
 - API-key tenant identity, atomic quotas, weighted fairness, priority aging, and cancellation
 - Supervised stale-worker recovery with bounded, reason-coded retries for unstarted work
 - Redis-compatible, prompt-redacting request metadata persistence and tenant-scoped status APIs
+- Authenticated local HTTP worker transport with strict JSON contracts and two-process tests
 
 ## What This Project Is Not
 
@@ -111,6 +112,24 @@ loading, worker-local batching, lifecycle persistence, and terminal response con
 through two deterministic local simulated workers. It returns the same `GenerateResponse`
 schema as `/v1/generate`, performs no remote inference, and does not replace the compatibility
 route.
+
+### Independent local workers
+
+The control plane can also dispatch to workers running as separate local processes. Each
+worker requires a shared development token and exposes only the internal lifecycle contract:
+
+```bash
+WORKER_ID=worker-a WORKER_AUTH_TOKEN=local-secret \
+  uvicorn apps.worker.main:app --host 127.0.0.1 --port 8101
+
+WORKER_ID=worker-b WORKER_AUTH_TOKEN=local-secret \
+  uvicorn apps.worker.main:app --host 127.0.0.1 --port 8102
+```
+
+These processes use the deterministic simulated runtime, make no external API calls, and
+incur no model or cloud charges. `HttpWorkerClient` supplies the matching synchronous
+control-plane handle. The transport is intended for localhost development: keep it bound to
+loopback because it does not provide TLS, service discovery, or internet-facing hardening.
 
 Malformed or unsupported input returns 400, oversized prompt/context input returns 413,
 tenant or concurrent admission returns 429, unavailable capacity returns 503, and expired
@@ -241,8 +260,8 @@ streaming, CPU-only, and single-worker semantics.
 
 ## Future Work
 
-The remaining production work includes independent worker transport, distributed admission
-accounting, Prometheus/OpenTelemetry export,
+The remaining production work includes distributed admission accounting,
+Prometheus/OpenTelemetry export,
 idempotency keys, atomic placement reservations, real GPU evaluation, continuous batching,
 sampling-parameter bucketing, and batched streaming.
 
