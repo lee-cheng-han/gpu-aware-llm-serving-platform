@@ -1,8 +1,9 @@
 # Benchmark Methodology
 
-Record the exact model (`sshleifer/tiny-gpt2` for development or `gpt2` for a more
-compute-heavy run), CPU model/core count, RAM, OS, Python/PyTorch versions, and whether
-the machine was otherwise idle. Do not compare runs made on different hardware.
+Record the exact model and immutable revision, CPU model/core count, RAM, OS,
+Python/PyTorch/Transformers versions, device, dtype, and whether the machine was otherwise
+idle. The reference proof uses pinned SmolLM2-135M-Instruct. Do not compare runs made on
+different hardware.
 
 Use the same fixed prompt set, request count, concurrency, `max_new_tokens`, temperature,
 and server limits for both policies. Warm the model before measurement. Restart the
@@ -43,3 +44,12 @@ throughput. Its reports must retain the `deterministic_simulation_not_real_hardw
 Real CPU/GPU reports must instead use the HTTP or direct-model runner and capture hardware,
 driver, CUDA, OS, Python, PyTorch, Transformers, model identifier and revision, scheduler
 configuration, workload, random seed, warm-up, and raw trials.
+
+## Whole-request versus explicit token-loop benchmark
+
+`python -m benchmark.compare_token_backends` runs identical greedy prompts through the
+legacy `generate()` path and the manual prefill/decode path. It records warmups and every
+trial. Manual TTFT is time through the prefill forward pass and first-token selection;
+legacy `generate()` exposes only full-call latency, which is reported solely as a TTFT upper
+bound. Average decode-step time excludes prefill. The runner makes no improvement claim and
+does not represent continuous batching.

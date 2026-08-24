@@ -8,20 +8,22 @@ continuous batching, or production-scale distributed serving.
 
 ## Why no PagedAttention
 
-PagedAttention solves GPU KV-cache allocation and fragmentation. This CPU v1 does whole
-Hugging Face `generate()` calls, so a custom cache manager would obscure the scheduling
-experiment.
+PagedAttention solves GPU KV-cache allocation and fragmentation. The non-streaming path uses
+whole Hugging Face `generate()` calls. Streaming now uses real prefill/decode with the
+framework's `DynamicCache`, which exposes token boundaries without claiming a custom
+allocator. Paged allocation remains a separate phase.
 
 ## Why CPU-only local model
 
 CPU execution is reproducible on a laptop and avoids CUDA-specific installation and
 capacity concerns. The results must not be generalized to GPU serving.
 
-## Why tiny-gpt2 for development and gpt2 for possible benchmarking
+## Why pinned SmolLM2 for the reference proof
 
-`sshleifer/tiny-gpt2` makes functional iteration quick, but framework, HTTP, and
-tokenization costs can dominate it. The sanity script helps decide whether `gpt2` gives a
-clearer compute-heavy comparison. Final reports must state the exact model and hardware.
+SmolLM2-135M-Instruct is small enough for a zero-cost CPU proof while exercising a modern
+cache API. The immutable revision makes the result reproducible. Tiny GPT-2 remains useful
+only for fast compatibility tests; final reports state the exact model, revision, and
+hardware.
 
 ## Why one worker
 
@@ -54,17 +56,16 @@ is skipped. If generation is already running, its result is discarded after the 
 model call returns. Graceful shutdown rejects queued work and waits for the active call so
 all scheduler result handles reach a terminal state.
 
-## Why streaming is single-request only
+## Why streaming is token-level but single-request only
 
-The SSE endpoint bypasses the batching queue and uses a Transformers streamer. Batched,
-interleaved token streaming requires per-sequence stopping and substantially different
-scheduling. Batching benchmarks therefore use `/v1/generate`.
+The SSE endpoint bypasses the static batching queue and uses explicit prefill/decode.
+Batched, interleaved token streaming requires a continuous scheduler that admits and removes
+sequences at token boundaries. Batching benchmarks therefore still use `/v1/generate`.
 
-Streaming admission is reserved before headers are returned, and released in generator
-cleanup on completion, failure, or client cancellation. A wrapper around the background
-generation thread explicitly ends the streamer on model failure so the consumer cannot
-wait forever. As with non-streaming inference, disconnecting does not preempt PyTorch;
-the daemon generation thread finishes locally and its remaining output is ignored.
+Streaming admission and backend capacity are reserved before headers and released on every
+terminal path. Cancellation is checked around every device call and emission. PyTorch
+cannot interrupt a forward pass already running, so cleanup waits for that pass, emits
+nothing afterward, and releases the sequence's private cache.
 
 All inference paths share one model execution lock. A long stream can therefore delay
 queued non-streaming work; allowing overlap would confound the one-worker experiment and

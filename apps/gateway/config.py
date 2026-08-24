@@ -23,9 +23,12 @@ def _bool_env(name: str, default: bool) -> bool:
 class Settings:
     host: str = "0.0.0.0"
     port: int = 8000
-    model_name: str = "sshleifer/tiny-gpt2"
-    model_revision: str = "main"
+    model_name: str = "HuggingFaceTB/SmolLM2-135M-Instruct"
+    model_revision: str = "12fd25f77366fa6b3b4b768ec3050bf629380bac"
     model_device: str = "cpu"
+    model_dtype: str = "float32"
+    inference_backend: str = "token_loop"
+    max_active_sequences: int = 1
     scheduler_policy: str = "no_batching"
     max_prompt_tokens: int = 1024
     max_prompt_characters: int = 16_384
@@ -48,9 +51,18 @@ class Settings:
         return cls(
             host=_env("HOST", "0.0.0.0", str),
             port=_env("PORT", 8000, int),
-            model_name=_env("MODEL_NAME", "sshleifer/tiny-gpt2", str),
-            model_revision=_env("MODEL_REVISION", "main", str),
+            model_name=_env(
+                "MODEL_NAME", "HuggingFaceTB/SmolLM2-135M-Instruct", str
+            ),
+            model_revision=_env(
+                "MODEL_REVISION",
+                "12fd25f77366fa6b3b4b768ec3050bf629380bac",
+                str,
+            ),
             model_device=_env("MODEL_DEVICE", "cpu", str),
+            model_dtype=_env("MODEL_DTYPE", "float32", str),
+            inference_backend=_env("INFERENCE_BACKEND", "token_loop", str),
+            max_active_sequences=_env("MAX_ACTIVE_SEQUENCES", 1, int),
             scheduler_policy=_env("SCHEDULER_POLICY", "no_batching", str),
             max_prompt_tokens=_env("MAX_PROMPT_TOKENS", 1024, int),
             max_prompt_characters=_env("MAX_PROMPT_CHARACTERS", 16_384, int),
@@ -78,10 +90,14 @@ class Settings:
             and self.model_device.removeprefix("cuda:").isdigit()
         ):
             raise ValueError("MODEL_DEVICE must be cpu, cuda, or cuda:<index>")
+        if self.model_dtype not in {"auto", "float32", "float16", "bfloat16"}:
+            raise ValueError("MODEL_DTYPE must be auto, float32, float16, or bfloat16")
+        if self.inference_backend not in {"token_loop", "legacy_generate"}:
+            raise ValueError("INFERENCE_BACKEND must be token_loop or legacy_generate")
         for name in (
             "port", "max_prompt_tokens", "max_prompt_characters", "max_new_tokens", "max_queue_size",
             "max_concurrent_requests", "max_batch_size", "max_total_batch_tokens",
-            "metrics_sample_limit",
+            "metrics_sample_limit", "max_active_sequences",
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")

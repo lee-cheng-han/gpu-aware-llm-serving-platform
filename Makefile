@@ -1,4 +1,4 @@
-.PHONY: install install-dev run test test-model lint typecheck evaluation docker-build docker-build-cuda docker-run deploy-kind benchmark-sanity benchmark-no-batching benchmark-dynamic-batch
+.PHONY: install install-dev run test test-model test-gpu lint typecheck evaluation docker-build docker-build-cuda docker-run deploy-kind benchmark-sanity benchmark-token-loop benchmark-no-batching benchmark-dynamic-batch
 install:
 	python -m pip install -r requirements.txt
 install-dev:
@@ -9,6 +9,8 @@ test:
 	pytest -q
 test-model:
 	RUN_MODEL_TESTS=1 pytest -m model -q
+test-gpu:
+	RUN_MODEL_TESTS=1 RUN_GPU_TESTS=1 pytest -m gpu -q
 lint:
 	ruff check .
 typecheck:
@@ -24,7 +26,9 @@ docker-run:
 deploy-kind:
 	./scripts/deploy_local_kind.sh
 benchmark-sanity:
-	python -m benchmark.sanity_model_benchmark --models sshleifer/tiny-gpt2 gpt2
+	python -m benchmark.sanity_model_benchmark --models HuggingFaceTB/SmolLM2-135M-Instruct
+benchmark-token-loop:
+	python -m benchmark.compare_token_backends
 benchmark-no-batching:
 	python -m benchmark.compare_schedulers --policy no_batching
 benchmark-dynamic-batch:

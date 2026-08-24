@@ -14,7 +14,10 @@ from apps.gateway.auth import ApiKeyAuthenticator, parse_api_keys
 from apps.gateway.config import Settings
 from apps.gateway.limits import ConcurrencyLimiter, StreamTracker
 from apps.gateway.metrics import Metrics
+from inference.backend import BackendBundle, BackendExecutor
+from inference.token_engine import TokenGenerationEngine
 from inference.worker import InferenceWorker
+from runtime.huggingface import HuggingFaceTokenBackend
 from scheduler.queue import RequestQueue
 from scheduler.scheduler_loop import run_scheduler
 from serving_platform.request_state import InMemoryRequestStateStore
@@ -22,7 +25,12 @@ from serving_platform.request_state import InMemoryRequestStateStore
 logger = logging.getLogger(__name__)
 
 
-def create_app(settings: Settings | None = None, worker=None, platform_pipeline=None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    worker=None,
+    platform_pipeline=None,
+    token_engine=None,
+) -> FastAPI:
     settings = settings or Settings.from_env()
     settings.validate()
 
@@ -50,6 +58,8 @@ def create_app(settings: Settings | None = None, worker=None, platform_pipeline=
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
+        if app.state.token_engine is not None:
+            await app.state.token_engine.shutdown()
 
     app = FastAPI(title="GPU-Aware LLM Serving Platform", version="1.0.0", lifespan=lifespan)
     origins = [
@@ -67,8 +77,22 @@ def create_app(settings: Settings | None = None, worker=None, platform_pipeline=
         )
     app.state.settings = settings
     app.state.worker = worker or InferenceWorker(
-        settings.model_name, settings.model_revision, settings.model_device
+        settings.model_name,
+        settings.model_revision,
+        settings.model_device,
+        settings.model_dtype,
     )
+    app.state.token_engine = token_engine
+    if (
+        token_engine is None
+        and settings.inference_backend == "token_loop"
+        and isinstance(app.state.worker, InferenceWorker)
+    ):
+        backend = HuggingFaceTokenBackend(app.state.worker)
+        app.state.token_engine = TokenGenerationEngine(
+            BackendBundle(backend, BackendExecutor()),
+            settings.max_active_sequences,
+        )
     app.state.metrics = Metrics(settings.metrics_sample_limit)
     app.state.request_queue = RequestQueue(settings.max_queue_size)
     app.state.limiter = ConcurrencyLimiter(settings.max_concurrent_requests)

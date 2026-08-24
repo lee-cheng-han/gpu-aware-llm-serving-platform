@@ -14,6 +14,13 @@ from apps.gateway.schemas import (
     ReadinessResponse,
     RequestStatusResponse,
 )
+from inference.token_engine import EngineCapacityError, InvalidStopTokenError
+from inference.token_types import (
+    FinishReason,
+    GeneratedToken,
+    GenerationComplete,
+    SamplingParameters,
+)
 from scheduler.queue import QueueClosed
 from scheduler.request import InferenceRequest, RequestStatus
 from serving_platform.domain import RequestRecord, RequestState
@@ -101,6 +108,15 @@ def _response(item: InferenceRequest) -> GenerateResponse:
     )
 
 
+def _require_legacy_sampling(body: GenerateRequest) -> None:
+    if body.top_p != 1 or body.stop_token_ids:
+        raise APIError(
+            400,
+            "unsupported_sampling_parameters",
+            "top_p and stop_token_ids require the token-loop streaming backend",
+        )
+
+
 def _platform_response(execution) -> GenerateResponse:
     record = execution.request
     queued_at = record.transition_timestamps[RequestState.QUEUED]
@@ -133,7 +149,10 @@ async def _validated(body: GenerateRequest, request: Request) -> tuple[int, floa
     # Both operations touch the same tokenizer/model. Keep them serial: the
     # context lookup is trivial after the token-count call has loaded the model.
     tokenization_started = time.perf_counter()
-    if getattr(worker, "run_inline_for_tests", False):
+    token_engine = request.app.state.token_engine
+    if token_engine is not None and hasattr(token_engine, "count_prompt_tokens"):
+        tokens = await token_engine.count_prompt_tokens(body.prompt)
+    elif getattr(worker, "run_inline_for_tests", False):
         tokens = worker.count_prompt_tokens(body.prompt)
     else:
         tokens = await asyncio.to_thread(worker.count_prompt_tokens, body.prompt)
@@ -178,6 +197,7 @@ async def generate(body: GenerateRequest, request: Request):
     identity = state.authenticator.authenticate(request)
     state.metrics.received()
     try:
+        _require_legacy_sampling(body)
         async with state.limiter.slot():
             tokens, validation_tokenization_ms = await _validated(body, request)
             item = InferenceRequest(
@@ -291,10 +311,12 @@ async def platform_generate(body: GenerateRequest, request: Request):
 
 @router.post("/v1/generate_stream")
 async def generate_stream(body: GenerateRequest, request: Request):
-    """Single-request SSE; it intentionally bypasses the batching queue."""
+    """Single-sequence SSE with explicit prefill/decode when the token backend is enabled."""
     state = request.app.state
     identity = state.authenticator.authenticate(request)
     state.metrics.received()
+    if state.token_engine is None:
+        _require_legacy_sampling(body)
     try:
         await state.stream_tracker.start()
     except HTTPException as exc:
@@ -329,6 +351,43 @@ async def generate_stream(body: GenerateRequest, request: Request):
     item.queued_at = item.started_at = time.monotonic()
     item.validation_tokenization_ms = validation_tokenization_ms
     item.status = RequestStatus.RUNNING
+    engine = state.token_engine
+    if engine is not None:
+        sampling = SamplingParameters(
+            body.max_new_tokens,
+            body.temperature,
+            body.top_p,
+            tuple(body.stop_token_ids),
+        )
+        deadline = item.deadline_at or (
+            time.monotonic() + state.settings.request_timeout_seconds
+        )
+        try:
+            await engine.validate_sampling(sampling)
+            engine.reserve(item.request_id, body.prompt, sampling, deadline)
+        except InvalidStopTokenError as exc:
+            await state.limiter.release()
+            await state.stream_tracker.finish()
+            state.metrics.rejected(reason="invalid_stop_token")
+            raise APIError(400, "invalid_stop_token", str(exc)) from exc
+        except EngineCapacityError as exc:
+            await state.limiter.release()
+            await state.stream_tracker.finish()
+            state.metrics.rejected(reason="engine_capacity_exceeded")
+            raise APIError(429, "engine_capacity_exceeded", str(exc)) from exc
+        except asyncio.CancelledError:
+            await state.limiter.release()
+            await state.stream_tracker.finish()
+            raise
+        except Exception as exc:
+            await state.limiter.release()
+            await state.stream_tracker.finish()
+            state.metrics.rejected(reason="token_backend_unavailable")
+            raise APIError(
+                503,
+                "token_backend_unavailable",
+                "the token inference backend is unavailable",
+            ) from exc
     platform_record = _platform_request(
         item,
         body,
@@ -338,7 +397,9 @@ async def generate_stream(body: GenerateRequest, request: Request):
         state.settings.request_timeout_seconds,
     )
     platform_record.stream = True
-    platform_record.transition(RequestState.RUNNING)
+    platform_record.transition(
+        RequestState.PREFILL if engine is not None else RequestState.RUNNING
+    )
     state.platform_requests.create(platform_record)
     state.active_gateway_requests[item.request_id] = item
 
@@ -348,24 +409,70 @@ async def generate_stream(body: GenerateRequest, request: Request):
                 batch_size=1, collection_ms=0, batched_call=False
             )
             state.metrics.model_execution_started()
-            iterator = state.worker.stream(body.prompt, body.max_new_tokens, body.temperature)
-            while True:
-                if getattr(state.worker, "stream_inline_for_tests", False):
-                    chunk = next(iterator, None)
-                else:
-                    token = await asyncio.to_thread(next, iterator, None)
-                    chunk = token
-                if chunk is None:
-                    break
-                if not item.first_token_at:
-                    item.first_token_at = time.monotonic()
-                item.output_tokens = chunk.output_tokens
-                yield f"data: {json.dumps({'request_id': item.request_id, 'token': chunk.text})}\n\n"
-            item.completed_at = time.monotonic()
-            item.status = (RequestStatus.TIMEOUT if item.timed_out(
-                state.settings.request_timeout_seconds) else RequestStatus.COMPLETED)
-            yield f"data: {json.dumps({'request_id': item.request_id, 'done': True})}\n\n"
+            if engine is not None:
+                async for event in engine.stream(item.request_id):
+                    if isinstance(event, GeneratedToken):
+                        if item.status == RequestStatus.CANCELLED:
+                            continue
+                        if not item.first_token_at:
+                            item.first_token_at = time.monotonic()
+                        if platform_record.status == RequestState.PREFILL:
+                            platform_record.transition(RequestState.DECODE)
+                            state.platform_requests.save(platform_record)
+                        item.output_tokens = event.index + 1
+                        item.result_text += event.text
+                        yield "data: " + json.dumps({
+                            "request_id": item.request_id,
+                            "token": event.text,
+                            "token_id": event.token_id,
+                            "index": event.index,
+                        }) + "\n\n"
+                    elif isinstance(event, GenerationComplete):
+                        item.input_tokens = event.input_tokens
+                        item.output_tokens = event.output_tokens
+                        item.worker_tokenization_ms = 0
+                        item.generation_ms = event.prefill_ms + event.decode_ms
+                        item.decoding_ms = event.decode_ms
+                        item.completed_at = time.monotonic()
+                        item.status = {
+                            FinishReason.CANCELLED: RequestStatus.CANCELLED,
+                            FinishReason.TIMEOUT: RequestStatus.TIMEOUT,
+                            FinishReason.FAILED: RequestStatus.FAILED,
+                        }.get(event.finish_reason, RequestStatus.COMPLETED)
+                        yield "data: " + json.dumps({
+                            "request_id": item.request_id,
+                            "done": True,
+                            "finish_reason": event.finish_reason.value,
+                            "usage": {
+                                "input_tokens": event.input_tokens,
+                                "output_tokens": event.output_tokens,
+                            },
+                        }) + "\n\n"
+            else:
+                iterator = state.worker.stream(
+                    body.prompt, body.max_new_tokens, body.temperature
+                )
+                while True:
+                    if getattr(state.worker, "stream_inline_for_tests", False):
+                        chunk = next(iterator, None)
+                    else:
+                        chunk = await asyncio.to_thread(next, iterator, None)
+                    if chunk is None:
+                        break
+                    if not item.first_token_at:
+                        item.first_token_at = time.monotonic()
+                    item.output_tokens = chunk.output_tokens
+                    yield f"data: {json.dumps({'request_id': item.request_id, 'token': chunk.text})}\n\n"
+                item.completed_at = time.monotonic()
+                item.status = (
+                    RequestStatus.TIMEOUT
+                    if item.timed_out(state.settings.request_timeout_seconds)
+                    else RequestStatus.COMPLETED
+                )
+                yield f"data: {json.dumps({'request_id': item.request_id, 'done': True})}\n\n"
         except asyncio.CancelledError:
+            if engine is not None:
+                engine.cancel(item.request_id)
             item.cancel("streaming client disconnected")
             raise
         except Exception:
@@ -378,7 +485,16 @@ async def generate_stream(body: GenerateRequest, request: Request):
                 },
             }
             yield f"data: {json.dumps(error_event)}\n\n"
-            yield f"data: {json.dumps({'request_id': item.request_id, 'done': True})}\n\n"
+            terminal_event = {
+                "request_id": item.request_id,
+                "done": True,
+                "finish_reason": FinishReason.FAILED.value,
+                "usage": {
+                    "input_tokens": tokens,
+                    "output_tokens": item.output_tokens,
+                },
+            }
+            yield f"data: {json.dumps(terminal_event)}\n\n"
         finally:
             item.input_tokens = tokens
             state.metrics.record(item)
@@ -411,6 +527,8 @@ async def cancel_request(request_id: str, request: Request):
     item = state.active_gateway_requests.get(request_id)
     if item is None:
         raise APIError(409, "request_not_cancellable", "request cannot be cancelled")
+    if state.token_engine is not None:
+        state.token_engine.cancel(request_id)
     item.cancel("cancelled through request API")
     _finish_platform_request(state, record, item.status, item.started_at or None)
     return _status_response(record)

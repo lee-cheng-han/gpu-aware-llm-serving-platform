@@ -6,19 +6,22 @@
 
 ## Overview
 
-A lean local FastAPI server for studying the systems tradeoff between serial request
-execution and short-window dynamic micro-batching on a CPU Hugging Face causal model.
-The deep axis is queueing and scheduling—not chatbot product features.
+A local FastAPI serving platform for studying request scheduling and explicit token-level
+inference on a Hugging Face causal model. The compatibility endpoint retains static
+micro-batching while the streaming endpoint performs real prefill and autoregressive decode
+against a framework-managed KV cache.
 
 ## What This Project Demonstrates
 
 - FastAPI, a bounded `asyncio` queue, and explicit request lifecycle states
-- Local CPU Hugging Face inference (`sshleifer/tiny-gpt2` by default)
+- Local CPU Hugging Face inference with pinned SmolLM2-135M-Instruct by default
+- Real prefill plus one-token decode using Hugging Face `DynamicCache`
 - Model-aware context-window validation and optional startup warm-up
 - No-batching and dynamic micro-batching schedulers
 - Queue, concurrency, prompt, output, and deadline limits
 - Cancellation-aware request futures and graceful queue shutdown
-- Single-request SSE streaming and JSON metrics
+- Cancellation-aware single-request SSE streaming with token IDs, indices, finish reason,
+  usage, and JSON metrics
 - Repeatable benchmark clients, Docker, and one-pod kind manifests
 - Typed CPU/CUDA worker abstractions, deterministic simulated GPU execution, and an
   in-memory heartbeat-aware worker registry
@@ -30,29 +33,32 @@ The deep axis is queueing and scheduling—not chatbot product features.
 - Supervised stale-worker recovery with bounded, reason-coded retries for unstarted work
 - Redis-compatible, prompt-redacting request metadata persistence and tenant-scoped status APIs
 - Authenticated local HTTP worker transport with strict JSON contracts and two-process tests
+- Redis-compatible atomic admission accounting and owner-leased recovery coordination
 
 ## What This Project Is Not
 
 - Not “mini-vLLM,” PagedAttention, continuous batching, or a vLLM/TGI/Triton replacement
 - The default gateway execution path is not yet distributed or production-scale; simulated
   GPU results are never real-device measurements
-- Not batched interleaved streaming or a custom KV-cache implementation
+- Not batched interleaved streaming or a custom/paged KV-cache implementation
 
 This project is not a replacement for vLLM, TGI, or Triton. It does not implement
 PagedAttention, GPU KV-cache paging, tensor parallelism, continuous batching, or
-production-scale distributed serving. v1 focuses on local request scheduling and dynamic
-micro-batching using a CPU Hugging Face model.
+production-scale distributed serving. Phase 1 combines local static request batching with
+an explicit single-sequence token loop using Hugging Face's non-paged dynamic cache.
 
 ## Architecture
 
 ```text
 POST /v1/generate -> validate/admit -> bounded queue -> scheduler policy -> CPU model
                                                 \------> JSON metrics
-POST /v1/generate_stream -> validate/admit -> unbatched CPU streamer -> SSE
+POST /v1/generate_stream -> validate/admit -> prefill -> token decode loop -> SSE
 ```
 
-Generation runs off the event loop in a thread; one scheduler owns one lazy-loaded model.
-See [architecture details](docs/architecture.md).
+All device work runs off the event loop through one dedicated executor lane and shares the
+compatibility worker's execution lock. See the [current architecture](docs/current-architecture.md),
+[target architecture](docs/target-architecture.md), and
+[backend ADR](docs/adr/001-huggingface-prefill-decode.md).
 
 ## Quick Start
 
@@ -68,9 +74,12 @@ Configuration is read from the environment:
 
 | Variable | Default |
 |---|---:|
-| `MODEL_NAME` | `sshleifer/tiny-gpt2` |
-| `MODEL_REVISION` | `main` |
+| `MODEL_NAME` | `HuggingFaceTB/SmolLM2-135M-Instruct` |
+| `MODEL_REVISION` | `12fd25f77366fa6b3b4b768ec3050bf629380bac` |
 | `MODEL_DEVICE` | `cpu` (`cuda` or `cuda:<index>` in the CUDA image) |
+| `MODEL_DTYPE` | `float32` |
+| `INFERENCE_BACKEND` | `token_loop` |
+| `MAX_ACTIVE_SEQUENCES` | `1` |
 | `SCHEDULER_POLICY` | `no_batching` |
 | `MAX_PROMPT_TOKENS` / `MAX_NEW_TOKENS` | `1024` / `128` |
 | `MAX_PROMPT_CHARACTERS` | `16384` |
@@ -97,7 +106,7 @@ curl -X POST http://localhost:8000/v1/generate \
 
 curl -N -X POST http://localhost:8000/v1/generate_stream \
   -H 'content-type: application/json' \
-  -d '{"prompt":"Explain PCIe simply.","max_new_tokens":32,"temperature":0.7}'
+  -d '{"prompt":"Explain PCIe simply.","max_new_tokens":32,"temperature":0.7,"top_p":0.9}'
 
 curl http://localhost:8000/metrics
 
@@ -131,6 +140,14 @@ incur no model or cloud charges. `HttpWorkerClient` supplies the matching synchr
 control-plane handle. The transport is intended for localhost development: keep it bound to
 loopback because it does not provide TLS, service discovery, or internet-facing hardening.
 
+For multi-control-plane experiments, `RedisAdmissionController` stores global queue and
+per-tenant queue, concurrency, and token reservations in one Redis hash. Lua scripts make
+reserve, queued-to-running, and idempotent release transitions atomic across processes.
+`RedisLease` provides compare-and-renew ownership for the recovery supervisor so only one
+instance expires workers at a time. Redis is an optional adapter: the default path remains
+in-memory, and all repository tests use a local deterministic fake rather than a hosted
+service.
+
 Malformed or unsupported input returns 400, oversized prompt/context input returns 413,
 tenant or concurrent admission returns 429, unavailable capacity returns 503, and expired
 generation requests return 504. Configured authentication failures return 401.
@@ -150,11 +167,19 @@ Request JSON accepts `priority` (`0`–`100`) and optional positive
 Set `CORS_ALLOWED_ORIGINS` to a comma-separated allowlist when browser access is required;
 wildcard origins and credentialed CORS are not enabled.
 
-The SSE path reserves concurrency before response headers are sent, counts generated model
-tokens independently of decoded text fragments, and always releases admission on success,
-failure, or disconnect. Background model exceptions produce a structured SSE error followed
-by `done`. Disconnecting cannot preempt an already-running Hugging Face generation thread;
-its output is discarded when that local call eventually returns.
+The SSE path reserves sequence capacity before response headers, performs a full-prompt
+prefill, and decodes one token at a time. Token events retain the original `token` field and
+add `token_id` and zero-based `index`; the terminal event adds `finish_reason` and final
+token usage. `stop_token_ids` accepts at most 32 unique, non-negative in-vocabulary IDs.
+Greedy sampling (`temperature=0`) ignores `top_p`; positive temperature uses top-p
+multinomial sampling. EOS and configured stop tokens terminate without emitting the special
+token.
+
+Client disconnect and `DELETE /v1/requests/{id}` set the same cancellation signal. A forward
+pass already on the device may finish, but no later token is emitted; cleanup then releases
+private cache state, sequence capacity, admission, and stream tracking. The non-streaming
+`/v1/generate` route intentionally retains its existing static batching and whole-request
+`generate()` behavior during this phase.
 
 ## Scheduler Design
 
@@ -189,11 +214,17 @@ not grow without limit. Metrics reset on restart.
 
 ## Benchmark Methodology
 
-First check model scale:
+Compare whole-request `generate()` with the explicit token loop on the same pinned model:
+
+```bash
+python -m benchmark.compare_token_backends --warmups 1 --trials 5
+```
+
+For the static scheduler comparison, first check model scale:
 
 ```bash
 python benchmark/sanity_model_benchmark.py \
-  --models sshleifer/tiny-gpt2 gpt2 --requests 50 --concurrency 8 --max-new-tokens 32
+  --models HuggingFaceTB/SmolLM2-135M-Instruct --requests 50 --concurrency 8 --max-new-tokens 32
 ```
 
 Then restart the server for each policy and run:
@@ -230,8 +261,10 @@ always labelled simulations and are regression signals, never hardware performan
 
 ## Benchmark Results
 
-No real-device measurements are committed yet. Deterministic simulated results are kept in
-a separate directory and include their workload, seed, thresholds, and classification.
+The repository includes a small measured CPU proof comparing the two model loops. It is a
+correctness-oriented measurement, not a throughput claim; see [results](docs/results.md) and
+the [raw report](docs/evidence/token-backend-cpu.json). Deterministic simulated scheduler
+results remain separately labelled.
 
 | Model / hardware | Policy | p50 ms | p95 ms | req/s | tokens/s | avg batch |
 |---|---|---:|---:|---:|---:|---:|
@@ -260,8 +293,7 @@ streaming, CPU-only, and single-worker semantics.
 
 ## Future Work
 
-The remaining production work includes distributed admission accounting,
-Prometheus/OpenTelemetry export,
+The remaining production work includes Prometheus/OpenTelemetry export,
 idempotency keys, atomic placement reservations, real GPU evaluation, continuous batching,
 sampling-parameter bucketing, and batched streaming.
 
@@ -275,8 +307,8 @@ make test
 make evaluation
 ```
 
-Normal tests never download a model. An explicit optional smoke test downloads and executes
-`sshleifer/tiny-gpt2`:
+Normal tests never download a model. The explicit optional model suite includes the pinned
+SmolLM2 proof (and retains tiny-gpt2 as a fast compatibility smoke test):
 
 ```bash
 make test-model

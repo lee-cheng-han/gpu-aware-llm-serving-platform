@@ -23,10 +23,17 @@ class StreamChunk:
 
 class InferenceWorker:
     """Lazy CPU worker. Scheduler calls it through asyncio.to_thread."""
-    def __init__(self, model_name: str, revision: str = "main", device: str = "cpu"):
+    def __init__(
+        self,
+        model_name: str,
+        revision: str = "main",
+        device: str = "cpu",
+        dtype: str = "float32",
+    ):
         self.model_name = model_name
         self.revision = revision
         self.device = device
+        self.dtype = dtype
         self.tokenizer = self.model = None
         self._load_lock = Lock()
         self._execution_lock = Lock()
@@ -38,7 +45,7 @@ class InferenceWorker:
                 if self.model is None:
                     try:
                         self.tokenizer, self.model = load_model(
-                            self.model_name, self.revision, self.device
+                            self.model_name, self.revision, self.device, self.dtype
                         )
                         self.load_error = None
                     except Exception as exc:

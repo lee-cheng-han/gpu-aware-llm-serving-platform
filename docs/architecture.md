@@ -12,13 +12,13 @@ Client
 FastAPI gateway (`apps.gateway`)
   |
   +--> validation and bounded HTTP concurrency
-  +--> single-request SSE path --------------------+
+  +--> single-request SSE prefill/decode ----------+
   |                                                |
   v                                                v
-bounded asyncio queue                         shared model lock
+bounded asyncio queue                    dedicated backend executor
   |                                                ^
   v                                                |
-serial or dynamic local scheduler ---> Hugging Face CPU worker
+serial or dynamic local scheduler ---> shared Hugging Face CPU worker
   |
   v
 bounded in-memory metrics
@@ -30,8 +30,10 @@ queue insertion. Blocking model calls run outside the event loop. Streaming and 
 generation share one execution lock, so the one-worker experiment never overlaps model
 calls.
 
-This remains a modular monolith. The compatibility generation routes retain the proven
-single-worker path. When `PLATFORM_API_ENABLED=true`, `/v1/platform/generate` executes the
+This remains a modular monolith. The non-streaming compatibility route retains the proven
+static scheduler; streaming uses explicit prefill and one-token decode with a non-paged
+Hugging Face `DynamicCache`. Device calls use one dedicated executor thread and never hold
+application locks across awaits. When `PLATFORM_API_ENABLED=true`, `/v1/platform/generate` executes the
 complete gateway-to-control-plane path through deterministic in-process simulated workers.
 The same control-plane interface can now address authenticated HTTP worker handles in
 independent local processes; a process-level integration test proves cold loading, dispatch,
@@ -48,6 +50,7 @@ apps/
 serving_platform/       (`platform` would shadow Python's standard-library module)
   domain/              typed models and request state machine data
   admission/           admission contract
+  coordination/        renewable shared ownership leases
   lifecycle/           validated transition service
   registry/            worker registry contract and in-memory implementation
   request_state/       request-state contract plus in-memory and Redis-compatible stores
@@ -116,12 +119,17 @@ duplicate loads with a condition variable, warms the model, then publishes resid
 the request enters its local queue. Under pressure it evicts least-recently-used models that
 have neither queued nor active requests. A supervised scan applies per-model idle timeouts.
 
-Tenant identity is derived by the gateway authenticator, never from request JSON. The
-control-plane admission controller reserves queue, concurrency, and estimated-token capacity
-atomically. Admitted requests enter a weighted deficit round-robin queue; tenant weight
-controls quantum, priority chooses within a tenant, and wait-time aging prevents old
-low-priority work from starving. The in-memory request store uses isolated snapshots and
-tracks the explicit lifecycle without logging prompts or generated text.
+Tenant identity is derived by the gateway authenticator, never from request JSON. Admission
+reserves queue, concurrency, and estimated-token capacity atomically. The default controller
+uses a process-local lock. The Redis-compatible controller applies the same lifecycle with
+Lua scripts over a single hash, making duplicate admission, queued-to-running transition,
+and release atomic across control-plane instances. A configuration fingerprint prevents
+replicas with different limits from silently sharing one counter namespace. Admitted
+requests enter a weighted
+deficit round-robin queue; tenant weight controls quantum, priority chooses within a tenant,
+and wait-time aging prevents old low-priority work from starving. The in-memory request
+store uses isolated snapshots and tracks the explicit lifecycle without logging prompts or
+generated text.
 
 Recovery is deliberately at-most-once for work that may have started: only assigned work
 with no running or streaming transition can return to the fair global queue. Started work
@@ -131,6 +139,11 @@ the original deadline. Tenant-authenticated request status and cancellation rout
 metadata without exposing prompts, output, or another tenant's request existence.
 Records reconstructed from Redis are metadata-only and cannot be resubmitted after a full
 process restart unless a deployment supplies a separate encrypted payload store.
+
+Recovery supervision accepts an optional renewable coordination lease. A Redis-backed lease
+uses `SET NX PX` to acquire ownership and compare-owner Lua scripts to renew or release it;
+standby supervisors skip heartbeat expiry unless they hold the lease. Expiration allows a
+standby to take over without allowing an old owner to renew or delete the new owner's lease.
 
 ## Local worker transport
 

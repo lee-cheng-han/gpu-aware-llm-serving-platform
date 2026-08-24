@@ -6,9 +6,10 @@
 - A queued request that expires is removed before execution and marked timed out.
 - Hugging Face generation cannot be preempted. A deadline or cancellation during generation
   is applied after the model call returns, and a cancelled request cannot become completed.
-- A client disconnect cancels queued work. Active local compute may continue, but remaining
-  output is discarded.
-- A streaming model exception wakes the SSE consumer and emits a structured error event.
+- A stream deadline, DELETE, or disconnect sets one sequence cancellation signal. An active
+  forward pass may finish, but no later token is emitted. Cleanup waits for the operation,
+  releases private backend cache state, and frees all admission/stream reservations.
+- A streaming model exception produces a structured SSE error and releases sequence state.
 - Shutdown stops admission, rejects queued and deferred requests, and waits for active work
   up to the configured grace period.
 
@@ -57,6 +58,13 @@
   failures, invalid worker identity, and non-success responses become transport errors;
   rejected handoffs return the request to global `QUEUED` state under the same rules as an
   in-process worker rejection.
+- Shared admission release is idempotent, and a repeated admission for the same request ID
+  returns its existing reservation instead of consuming capacity twice. Reserve,
+  queued-to-running, and release updates execute atomically in Redis. Conflicting tenant
+  limits in one shared namespace fail during controller construction.
+- A recovery supervisor with shared coordination does no expiry or retry work unless it
+  owns the renewable lease. Renewal and release are owner-checked, so a delayed former
+  owner cannot modify a successor's lease.
 
 ## Not implemented yet
 
@@ -64,5 +72,5 @@ The default FastAPI generation path does not yet run through the multi-worker co
 and its default request store remains in memory. Redis client construction, deployment,
 high availability, and migrations are operator concerns; the repository supplies the
 adapter rather than running Redis. Recovery updates are not a distributed transaction with
-queue insertion, so a production deployment still needs atomic persistence/queue claiming
-and leader coordination. Partially streamed requests are intentionally never retried.
+queue insertion, so a production deployment still needs atomic persistence and queue
+claiming. Partially streamed requests are intentionally never retried.

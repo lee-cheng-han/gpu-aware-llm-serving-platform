@@ -10,7 +10,7 @@ from apps.control_plane.service import ControlPlane, WorkerDirectory
 from apps.worker import ManagedWorker
 from runtime.base import RuntimeResult
 from runtime.simulated_gpu import SimulatedGpuConfig, SimulatedGpuRuntime
-from serving_platform.admission import TenantAdmissionController
+from serving_platform.admission import AdmissionController, TenantAdmissionController
 from serving_platform.domain import (
     ModelDefinition,
     RequestRecord,
@@ -51,7 +51,7 @@ class LocalControlPlanePipeline:
         registry: InMemoryWorkerRegistry,
         models: InMemoryModelRegistry,
         requests: RequestStateStore,
-        admission: TenantAdmissionController,
+        admission: AdmissionController,
         fair_queue: WeightedFairRequestQueue,
         control_plane: ControlPlane,
         workers: WorkerDirectory,

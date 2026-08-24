@@ -20,6 +20,31 @@ from serving_platform.routing import LeastQueueDepthPolicy
 from serving_platform.scheduling import WeightedFairRequestQueue
 
 
+class FakeLease:
+    def __init__(self, available: bool):
+        self.available = available
+        self.owner = False
+        self.acquire_attempted = asyncio.Event()
+        self.released = False
+
+    def acquire(self) -> bool:
+        self.acquire_attempted.set()
+        self.owner = self.available
+        return self.owner
+
+    def renew(self) -> bool:
+        return self.owner
+
+    def release(self) -> bool:
+        was_owner = self.owner
+        self.owner = False
+        self.released = was_owner
+        return was_owner
+
+    def is_owner(self) -> bool:
+        return self.owner
+
+
 def worker() -> WorkerState:
     return WorkerState(
         "failed-worker", DeviceType.SIMULATED_GPU, "sim", 1000, 900,
@@ -129,3 +154,28 @@ async def test_supervisor_automatically_expires_worker_and_recovers_request():
     await asyncio.wait_for(task, 1)
     assert registry.get("failed-worker").health_status == HealthStatus.UNHEALTHY
     assert supervisor.failure is None
+
+
+async def test_supervisor_runs_recovery_only_while_holding_shared_lease():
+    now = [0.0]
+    registry = InMemoryWorkerRegistry(heartbeat_timeout_seconds=1, clock=lambda: now[0])
+    registry.register(worker())
+    store = InMemoryRequestStateStore()
+    store.create(request("queued", RequestState.QUEUED))
+    plane, fair_queue = control_plane(now, registry, store)
+    lease = FakeLease(available=False)
+    supervisor = ReliabilitySupervisor(
+        registry,
+        plane,
+        check_interval_seconds=0.001,
+        lease=lease,
+    )
+    task = asyncio.create_task(supervisor.run())
+    now[0] = 2
+    await asyncio.wait_for(lease.acquire_attempted.wait(), 1)
+    supervisor.stop()
+    await asyncio.wait_for(task, 1)
+
+    assert registry.get("failed-worker").health_status == HealthStatus.HEALTHY
+    assert fair_queue.depth() == 0
+    assert not lease.released

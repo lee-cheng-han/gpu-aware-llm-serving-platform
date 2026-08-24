@@ -18,6 +18,14 @@ Worker loss can requeue assigned work only if no running or streaming transition
 Potentially started work fails instead of risking duplicate inference. Retry count, reason,
 and the original deadline remain authoritative.
 
+## Shared counters use atomic server-side transitions
+
+Multi-instance admission cannot use read-then-write counters without oversubscribing tenant
+or global capacity. The Redis-compatible adapter keeps related counters and reservations in
+one hash and applies each lifecycle transition in one Lua script. Recovery leadership uses
+an expiring owner token; renew and release compare ownership before changing the lease.
+Both adapters are optional, leaving the zero-cost in-memory path unchanged.
+
 ## Weighted fairness is token-cost aware
 
 Weighted deficit round robin allocates service by tenant weight and estimated token cost.
@@ -38,6 +46,7 @@ tracked as remaining production work rather than hidden behind documentation.
 
 ## Dynamic batching is not continuous batching
 
-This project forms short-window batches and runs whole Hugging Face `generate()` calls.
-It does not add or remove sequences at token boundaries and does not implement PagedAttention
-or a custom KV-cache manager.
+The non-streaming path forms short-window batches and runs whole Hugging Face `generate()`
+calls. The streaming path has explicit token boundaries but executes one sequence at a time;
+it does not admit or remove members of an active batch and therefore is not continuous
+batching. It does not implement PagedAttention or a custom KV-cache manager.

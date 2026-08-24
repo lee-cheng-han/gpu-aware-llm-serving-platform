@@ -6,10 +6,12 @@
   yet selected from gateway configuration or intended for untrusted networks.
 - The worker HTTP transport has authentication and bounded timeouts, but no TLS, service
   discovery, token rotation, durable delivery, or asynchronous connection pooling.
-- Heartbeat expiry and recovery are supervised, but registry state and leadership remain
-  process-local.
-- Tenant admission and fairness are in-memory control-plane components; the public API still
-  uses its compatibility limiter until the multi-worker deployment path is activated.
+- Heartbeat expiry and recovery can use a Redis-compatible owner lease, but worker registry
+  state remains process-local and recovery is not transactionally coupled to queue insertion.
+- Shared Redis-compatible admission accounting is available, while the default platform API
+  still uses the in-memory controller and the compatibility API uses its local limiter.
+- Redis deployment, authentication, persistence, high availability, and client construction
+  remain operator concerns; no Redis server or client package is bundled.
 - The default request store contains prompts for the process lifetime. The Redis-compatible
   adapter persists metadata only; reconstructed records cannot resume without a separate
   encrypted payload store.
@@ -18,12 +20,16 @@
   reservation and safety reserve.
 - Estimated completion time assumes queued requests resemble the incoming request and uses
   registered load timeout as the cold-start penalty; it is not a latency guarantee.
-- Standard Hugging Face `generate()` is used.
+- The non-streaming compatibility path still uses Hugging Face `generate()` and static
+  request batching. Streaming uses explicit prefill/decode with `DynamicCache`.
 - There is no PagedAttention, custom KV-cache paging, tensor parallelism, or true continuous
   batching.
-- Active Hugging Face generation cannot be interrupted immediately.
+- An active PyTorch forward pass cannot be interrupted immediately. Cancellation prevents
+  subsequent decode and emission, then waits for the active operation before cache cleanup.
 - Metrics, queues, and request outcomes are process-local.
 - Deployment is single-host and single-replica.
 - No GPU benchmark result should be inferred from CPU measurements.
 - Simulated throughput is a deterministic workload model, not measured hardware performance.
-- The CUDA image and profile are packaging examples; no real-device result has been recorded.
+- CPU prefill/decode correctness and cache growth have been validated on the pinned model.
+  The CUDA image and gated tests exist, but no real-device report has been recorded; GPU
+  support remains explicitly unverified.

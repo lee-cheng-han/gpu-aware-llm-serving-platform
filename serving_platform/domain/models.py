@@ -30,6 +30,8 @@ class RequestState(StrEnum):
     ADMITTED = "admitted"
     QUEUED = "queued"
     ASSIGNED = "assigned"
+    PREFILL = "prefill"
+    DECODE = "decode"
     RUNNING = "running"
     STREAMING = "streaming"
     COMPLETED = "completed"
@@ -68,6 +70,7 @@ ALLOWED_REQUEST_TRANSITIONS: dict[RequestState, frozenset[RequestState]] = {
     }),
     RequestState.QUEUED: frozenset({
         RequestState.ASSIGNED,
+        RequestState.PREFILL,
         RequestState.RUNNING,
         RequestState.REJECTED,
         RequestState.TIMED_OUT,
@@ -76,6 +79,7 @@ ALLOWED_REQUEST_TRANSITIONS: dict[RequestState, frozenset[RequestState]] = {
     }),
     RequestState.ASSIGNED: frozenset({
         RequestState.QUEUED,
+        RequestState.PREFILL,
         RequestState.RUNNING,
         RequestState.TIMED_OUT,
         RequestState.CANCELLED,
@@ -83,6 +87,19 @@ ALLOWED_REQUEST_TRANSITIONS: dict[RequestState, frozenset[RequestState]] = {
     }),
     RequestState.RUNNING: frozenset({
         RequestState.STREAMING,
+        RequestState.COMPLETED,
+        RequestState.TIMED_OUT,
+        RequestState.CANCELLED,
+        RequestState.FAILED,
+    }),
+    RequestState.PREFILL: frozenset({
+        RequestState.DECODE,
+        RequestState.COMPLETED,
+        RequestState.TIMED_OUT,
+        RequestState.CANCELLED,
+        RequestState.FAILED,
+    }),
+    RequestState.DECODE: frozenset({
         RequestState.COMPLETED,
         RequestState.TIMED_OUT,
         RequestState.CANCELLED,

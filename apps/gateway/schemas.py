@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class GenerateRequest(BaseModel):
@@ -7,8 +7,19 @@ class GenerateRequest(BaseModel):
     prompt: str
     max_new_tokens: int = Field(default=64, gt=0)
     temperature: float = Field(default=0.7, ge=0)
+    top_p: float = Field(default=1.0, gt=0, le=1)
+    stop_token_ids: list[int] = Field(default_factory=list, max_length=32)
     priority: int = Field(default=0, ge=0, le=100)
     deadline_seconds: float | None = Field(default=None, gt=0)
+
+    @field_validator("stop_token_ids")
+    @classmethod
+    def validate_stop_token_ids(cls, values: list[int]) -> list[int]:
+        if any(value < 0 for value in values):
+            raise ValueError("stop token identifiers must be non-negative")
+        if len(set(values)) != len(values):
+            raise ValueError("stop token identifiers must be unique")
+        return values
 
 
 class GenerateResponse(BaseModel):

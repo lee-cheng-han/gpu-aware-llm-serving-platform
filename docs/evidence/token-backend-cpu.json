@@ -1,0 +1,67 @@
+{
+  "classification": "measured_hardware_result",
+  "model": {
+    "id": "HuggingFaceTB/SmolLM2-135M-Instruct",
+    "revision": "12fd25f77366fa6b3b4b768ec3050bf629380bac"
+  },
+  "environment": {
+    "python": "3.12.14",
+    "platform": "Linux-6.18.33.1-microsoft-standard-WSL2-x86_64-with-glibc2.43",
+    "processor": "Intel(R) Core(TM) Ultra 7 155H",
+    "logical_cpu_count": 12,
+    "pytorch": "2.7.0+cpu",
+    "transformers": "4.51.3",
+    "device": "cpu",
+    "dtype": "float32"
+  },
+  "workload": {
+    "prompt": "Explain cache memory in one sentence.",
+    "max_new_tokens": 4,
+    "warmups": 1,
+    "trials": 2,
+    "temperature": 0
+  },
+  "legacy_generate": {
+    "end_to_end_ms": 262.37606500035326,
+    "first_token_upper_bound_ms": 262.37606500035326,
+    "tokens_per_second": 15.588503606025382
+  },
+  "manual_token_loop": {
+    "end_to_end_ms": 295.9630945006211,
+    "ttft_ms": 107.48979549998694,
+    "avg_decode_step_ms": 62.82443300021138,
+    "tokens_per_second": 13.528981399730904
+  },
+  "raw_trials": {
+    "legacy_generate": [
+      {
+        "end_to_end_ms": 223.4444590003477,
+        "first_token_upper_bound_ms": 223.4444590003477,
+        "tokens_per_second": 17.901540355466032
+      },
+      {
+        "end_to_end_ms": 301.3076710003588,
+        "first_token_upper_bound_ms": 301.3076710003588,
+        "tokens_per_second": 13.275466856584732
+      }
+    ],
+    "manual_token_loop": [
+      {
+        "end_to_end_ms": 305.40965600084746,
+        "ttft_ms": 127.90416699954221,
+        "avg_decode_step_ms": 59.16849633376842,
+        "tokens_per_second": 13.097162848017158
+      },
+      {
+        "end_to_end_ms": 286.5165330003947,
+        "ttft_ms": 87.07542400043167,
+        "avg_decode_step_ms": 66.48036966665434,
+        "tokens_per_second": 13.96079995144465
+      }
+    ]
+  },
+  "notes": [
+    "Legacy generate() exposes no true TTFT; its full latency is an upper bound.",
+    "Results compare correctness paths, not continuous batching."
+  ]
+}
