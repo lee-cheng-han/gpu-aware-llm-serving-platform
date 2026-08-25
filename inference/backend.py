@@ -3,13 +3,19 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, TypeVar
 
 from inference.token_types import GeneratedToken, SamplingParameters, TokenizedPrompt
 from runtime.base import RuntimeCapacity
 
 T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class BatchTokenResult:
+    tokens: dict[str, GeneratedToken]
+    failures: dict[str, BaseException] = field(default_factory=dict)
 
 
 class InferenceBackend(Protocol):
@@ -28,6 +34,21 @@ class InferenceBackend(Protocol):
         parameters: SamplingParameters,
         index: int,
     ) -> GeneratedToken: ...
+    def prefill_batch(
+        self,
+        requests: tuple[tuple[str, TokenizedPrompt, SamplingParameters], ...],
+    ) -> BatchTokenResult: ...
+    def prefill_chunk(
+        self,
+        sequence_id: str,
+        prompt: TokenizedPrompt,
+        parameters: SamplingParameters,
+        final: bool,
+    ) -> GeneratedToken | None: ...
+    def decode_batch(
+        self,
+        requests: tuple[tuple[str, SamplingParameters, int], ...],
+    ) -> BatchTokenResult: ...
     def release_sequence(self, sequence_id: str) -> None: ...
     def capacity(self) -> RuntimeCapacity: ...
     def shutdown(self) -> None: ...

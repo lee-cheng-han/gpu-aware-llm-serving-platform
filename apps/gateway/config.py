@@ -28,7 +28,15 @@ class Settings:
     model_device: str = "cpu"
     model_dtype: str = "float32"
     inference_backend: str = "token_loop"
-    max_active_sequences: int = 1
+    max_active_sequences: int = 8
+    token_max_batch_size: int = 8
+    token_scheduling_policy: str = "balanced"
+    prefill_chunk_size_tokens: int = 0
+    kv_cache_total_blocks: int = 1024
+    kv_cache_block_size_tokens: int = 16
+    kv_cache_bytes_per_block: int = 737_280
+    kv_cache_high_watermark: float = 0.9
+    kv_cache_low_watermark: float = 0.7
     scheduler_policy: str = "no_batching"
     max_prompt_tokens: int = 1024
     max_prompt_characters: int = 16_384
@@ -62,7 +70,19 @@ class Settings:
             model_device=_env("MODEL_DEVICE", "cpu", str),
             model_dtype=_env("MODEL_DTYPE", "float32", str),
             inference_backend=_env("INFERENCE_BACKEND", "token_loop", str),
-            max_active_sequences=_env("MAX_ACTIVE_SEQUENCES", 1, int),
+            max_active_sequences=_env("MAX_ACTIVE_SEQUENCES", 8, int),
+            token_max_batch_size=_env("TOKEN_MAX_BATCH_SIZE", 8, int),
+            token_scheduling_policy=_env(
+                "TOKEN_SCHEDULING_POLICY", "balanced", str
+            ),
+            prefill_chunk_size_tokens=_env("PREFILL_CHUNK_SIZE_TOKENS", 0, int),
+            kv_cache_total_blocks=_env("KV_CACHE_TOTAL_BLOCKS", 1024, int),
+            kv_cache_block_size_tokens=_env(
+                "KV_CACHE_BLOCK_SIZE_TOKENS", 16, int
+            ),
+            kv_cache_bytes_per_block=_env("KV_CACHE_BYTES_PER_BLOCK", 737_280, int),
+            kv_cache_high_watermark=_env("KV_CACHE_HIGH_WATERMARK", 0.9, float),
+            kv_cache_low_watermark=_env("KV_CACHE_LOW_WATERMARK", 0.7, float),
             scheduler_policy=_env("SCHEDULER_POLICY", "no_batching", str),
             max_prompt_tokens=_env("MAX_PROMPT_TOKENS", 1024, int),
             max_prompt_characters=_env("MAX_PROMPT_CHARACTERS", 16_384, int),
@@ -94,13 +114,34 @@ class Settings:
             raise ValueError("MODEL_DTYPE must be auto, float32, float16, or bfloat16")
         if self.inference_backend not in {"token_loop", "legacy_generate"}:
             raise ValueError("INFERENCE_BACKEND must be token_loop or legacy_generate")
+        if self.token_scheduling_policy not in {
+            "prefill_first",
+            "decode_first",
+            "balanced",
+        }:
+            raise ValueError(
+                "TOKEN_SCHEDULING_POLICY must be prefill_first, decode_first, or balanced"
+            )
         for name in (
             "port", "max_prompt_tokens", "max_prompt_characters", "max_new_tokens", "max_queue_size",
             "max_concurrent_requests", "max_batch_size", "max_total_batch_tokens",
             "metrics_sample_limit", "max_active_sequences",
+            "token_max_batch_size", "kv_cache_total_blocks",
+            "kv_cache_block_size_tokens", "kv_cache_bytes_per_block",
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
+        if self.token_max_batch_size > self.max_active_sequences:
+            raise ValueError("TOKEN_MAX_BATCH_SIZE cannot exceed MAX_ACTIVE_SEQUENCES")
         if (self.request_timeout_seconds <= 0 or self.shutdown_grace_seconds <= 0
                 or self.max_wait_ms < 0):
             raise ValueError("timeout must be positive and wait must be non-negative")
+        if not (
+            0
+            < self.kv_cache_low_watermark
+            < self.kv_cache_high_watermark
+            <= 1
+        ):
+            raise ValueError("KV cache watermarks must satisfy 0 < low < high <= 1")
+        if self.prefill_chunk_size_tokens < 0:
+            raise ValueError("PREFILL_CHUNK_SIZE_TOKENS must be non-negative")

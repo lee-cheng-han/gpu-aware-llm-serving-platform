@@ -8,19 +8,24 @@
 
 A local FastAPI serving platform for studying request scheduling and explicit token-level
 inference on a Hugging Face causal model. The compatibility endpoint retains static
-micro-batching while the streaming endpoint performs real prefill and autoregressive decode
-against a framework-managed KV cache.
+micro-batching while streaming requests enter a shared iteration scheduler for real batched
+prefill and autoregressive decode against framework-managed KV caches.
 
 ## What This Project Demonstrates
 
 - FastAPI, a bounded `asyncio` queue, and explicit request lifecycle states
 - Local CPU Hugging Face inference with pinned SmolLM2-135M-Instruct by default
 - Real prefill plus one-token decode using Hugging Face `DynamicCache`
+- Continuous waiting/running sequence sets with iteration-level admission and compatible
+  real-model prefill/decode batches
+- Fixed-block KV capacity reservation, ownership tables, reference counts, watermarks, and
+  exhaustion handling
+- Prefill-first, decode-first, balanced, and optional real chunked-prefill execution
 - Model-aware context-window validation and optional startup warm-up
 - No-batching and dynamic micro-batching schedulers
 - Queue, concurrency, prompt, output, and deadline limits
 - Cancellation-aware request futures and graceful queue shutdown
-- Cancellation-aware single-request SSE streaming with token IDs, indices, finish reason,
+- Cancellation-aware interleaved SSE streaming with token IDs, indices, finish reason,
   usage, and JSON metrics
 - Repeatable benchmark clients, Docker, and one-pod kind manifests
 - Typed CPU/CUDA worker abstractions, deterministic simulated GPU execution, and an
@@ -37,22 +42,23 @@ against a framework-managed KV cache.
 
 ## What This Project Is Not
 
-- Not “mini-vLLM,” PagedAttention, continuous batching, or a vLLM/TGI/Triton replacement
+- Not “mini-vLLM,” PagedAttention, or a vLLM/TGI/Triton replacement
 - The default gateway execution path is not yet distributed or production-scale; simulated
   GPU results are never real-device measurements
-- Not batched interleaved streaming or a custom/paged KV-cache implementation
+- The block allocator governs admission and ownership, but physical model tensors still use
+  Hugging Face `DynamicCache`; this is not a custom paged-attention kernel
 
 This project is not a replacement for vLLM, TGI, or Triton. It does not implement
-PagedAttention, GPU KV-cache paging, tensor parallelism, continuous batching, or
-production-scale distributed serving. Phase 1 combines local static request batching with
-an explicit single-sequence token loop using Hugging Face's non-paged dynamic cache.
+PagedAttention, GPU KV tensor paging, tensor parallelism, or production-scale distributed
+serving. The streaming path continuously schedules multiple sequences but only combines
+decode work with compatible physical cache lengths until a paged-attention backend exists.
 
 ## Architecture
 
 ```text
 POST /v1/generate -> validate/admit -> bounded queue -> scheduler policy -> CPU model
                                                 \------> JSON metrics
-POST /v1/generate_stream -> validate/admit -> prefill -> token decode loop -> SSE
+POST /v1/generate_stream -> KV reserve -> waiting/running scheduler -> batched iterations -> SSE
 ```
 
 All device work runs off the event loop through one dedicated executor lane and shares the
@@ -79,7 +85,12 @@ Configuration is read from the environment:
 | `MODEL_DEVICE` | `cpu` (`cuda` or `cuda:<index>` in the CUDA image) |
 | `MODEL_DTYPE` | `float32` |
 | `INFERENCE_BACKEND` | `token_loop` |
-| `MAX_ACTIVE_SEQUENCES` | `1` |
+| `MAX_ACTIVE_SEQUENCES` / `TOKEN_MAX_BATCH_SIZE` | `8` / `8` |
+| `TOKEN_SCHEDULING_POLICY` | `balanced` |
+| `PREFILL_CHUNK_SIZE_TOKENS` | `0` (full prefill) |
+| `KV_CACHE_TOTAL_BLOCKS` / `KV_CACHE_BLOCK_SIZE_TOKENS` | `1024` / `16` |
+| `KV_CACHE_BYTES_PER_BLOCK` | `737280` (reference-model float32 estimate) |
+| `KV_CACHE_HIGH_WATERMARK` / `KV_CACHE_LOW_WATERMARK` | `0.9` / `0.7` |
 | `SCHEDULER_POLICY` | `no_batching` |
 | `MAX_PROMPT_TOKENS` / `MAX_NEW_TOKENS` | `1024` / `128` |
 | `MAX_PROMPT_CHARACTERS` | `16384` |
@@ -167,8 +178,11 @@ Request JSON accepts `priority` (`0`–`100`) and optional positive
 Set `CORS_ALLOWED_ORIGINS` to a comma-separated allowlist when browser access is required;
 wildcard origins and credentialed CORS are not enabled.
 
-The SSE path reserves sequence capacity before response headers, performs a full-prompt
-prefill, and decodes one token at a time. Token events retain the original `token` field and
+The SSE path reserves sequence and logical KV capacity before response headers. A central
+scheduler forms real prefill/decode batches, removes completed sequences independently, and
+allows new requests to enter between iterations. Set `PREFILL_CHUNK_SIZE_TOKENS` to bound
+each real prefill operation and allow balanced policies to interleave decode work. Token
+events retain the original `token` field and
 add `token_id` and zero-based `index`; the terminal event adds `finish_reason` and final
 token usage. `stop_token_ids` accepts at most 32 unique, non-negative in-vocabulary IDs.
 Greedy sampling (`temperature=0`) ignores `top_p`; positive temperature uses top-p
@@ -179,9 +193,18 @@ Client disconnect and `DELETE /v1/requests/{id}` set the same cancellation signa
 pass already on the device may finish, but no later token is emitted; cleanup then releases
 private cache state, sequence capacity, admission, and stream tracking. The non-streaming
 `/v1/generate` route intentionally retains its existing static batching and whole-request
-`generate()` behavior during this phase.
+`generate()` behavior.
 
 ## Scheduler Design
+
+The streaming token scheduler maintains explicit waiting and running sets. Each iteration
+selects prefill or decode work using `prefill_first`, `decode_first`, or `balanced`. Compatible
+sequences execute in one real Hugging Face batch; sequences terminate, fail, or cancel
+independently. Decode batches currently require equal physical cache lengths because
+`DynamicCache` is not PagedAttention. See [token scheduling](docs/token-scheduler.md) and
+[KV-cache accounting](docs/kv-cache.md).
+
+The non-streaming compatibility scheduler remains separate:
 
 `no_batching` takes exactly one request and makes one model call. `dynamic_batch` takes a
 first request, waits up to `MAX_WAIT_MS`, and collects until batch-size or estimated total
@@ -210,7 +233,9 @@ and batch-collection times. It reports both process-lifetime and rolling 60-seco
 and token throughput. Cancelled requests remain separate from failures and timeouts.
 Recent latency percentiles, rejection reasons, active model executions, and the configured
 sample limit are also exposed. Timing samples use bounded deques, so metrics memory does
-not grow without limit. Metrics reset on restart.
+not grow without limit. Token scheduler metrics add waiting/running counts, iteration and
+batch counts, selected policy, maximum observed batch size, KV blocks/bytes/utilization,
+allocation failures, and pressure state. Metrics reset on restart.
 
 ## Benchmark Methodology
 
@@ -293,9 +318,9 @@ streaming, CPU-only, and single-worker semantics.
 
 ## Future Work
 
-The remaining production work includes Prometheus/OpenTelemetry export,
-idempotency keys, atomic placement reservations, real GPU evaluation, continuous batching,
-sampling-parameter bucketing, and batched streaming.
+The remaining production work includes Prometheus/OpenTelemetry export, idempotency keys,
+atomic placement reservations, real GPU evaluation, physical paged KV tensors/PagedAttention,
+arbitrary-length decode batching, prefix caching, and multi-GPU execution.
 
 ## Development Checks
 

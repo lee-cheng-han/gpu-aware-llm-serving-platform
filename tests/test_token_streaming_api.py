@@ -4,6 +4,8 @@ import time
 import httpx
 
 from apps.gateway.main import create_app
+from inference.kv_cache import KVCacheSnapshot
+from inference.token_engine import TokenSchedulerSnapshot
 from inference.token_types import FinishReason, GeneratedToken, GenerationComplete
 
 
@@ -15,7 +17,7 @@ class FakeTokenEngine:
     async def validate_sampling(self, sampling):
         return None
 
-    def reserve(self, request_id, prompt, sampling, deadline):
+    def reserve(self, request_id, prompt, sampling, deadline, **kwargs):
         self.request_id = request_id
         assert deadline > time.monotonic()
 
@@ -29,6 +31,18 @@ class FakeTokenEngine:
 
     async def shutdown(self):
         return None
+
+    def scheduler_snapshot(self):
+        return TokenSchedulerSnapshot(
+            0,
+            0,
+            3,
+            1,
+            2,
+            2,
+            "balanced",
+            KVCacheSnapshot(16, 0, 16, 4, 128, 0, 0, 0, False),
+        )
 
 
 def events(response):
@@ -112,3 +126,19 @@ async def test_backend_load_failure_uses_error_envelope_before_sse_headers(setti
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "token_backend_unavailable"
     assert app.state.limiter.active == 0
+
+
+async def test_metrics_include_token_scheduler_and_kv_accounting(settings):
+    from conftest import FakeWorker
+
+    app = create_app(settings, FakeWorker(), token_engine=FakeTokenEngine())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/metrics")
+
+    payload = response.json()
+    assert payload["token_scheduler"]["iterations"] == 3
+    assert payload["token_scheduler"]["max_observed_batch_size"] == 2
+    assert payload["kv_cache"]["kv_blocks_total"] == 16
+    assert payload["kv_cache"]["kv_cache_utilization"] == 0

@@ -1,4 +1,4 @@
-.PHONY: install install-dev run test test-model test-gpu lint typecheck evaluation docker-build docker-build-cuda docker-run deploy-kind benchmark-sanity benchmark-token-loop benchmark-no-batching benchmark-dynamic-batch
+.PHONY: install install-dev run test test-model test-gpu lint typecheck evaluation evaluation-token-policies docker-build docker-build-cuda docker-run deploy-kind benchmark-sanity benchmark-token-loop benchmark-no-batching benchmark-dynamic-batch
 install:
 	python -m pip install -r requirements.txt
 install-dev:
@@ -17,6 +17,8 @@ typecheck:
 	mypy
 evaluation:
 	python -m benchmark.run_simulated_evaluation --check
+evaluation-token-policies:
+	python -m benchmark.compare_token_scheduling_policies
 docker-build:
 	docker build -t gpu-aware-llm-serving-platform:local .
 docker-build-cuda:

@@ -32,6 +32,25 @@ client -> FastAPI gateway -> admission -> global routing -> token scheduler
 This step uses Hugging Face `DynamicCache`. It has a real inference effect but is not the
 project's planned paged/block allocator.
 
+## Implemented: continuous scheduling and prefill/decode policies
+
+- Central waiting/running sequence sets instead of one model loop per HTTP generator
+- Iteration-level admission and independent completion, failure, timeout, and cancellation
+- Real batched Hugging Face prefill and decode for physically compatible cache lengths
+- Prefill-first, decode-first, balanced, and bounded chunked-prefill execution
+- Per-request event queues preserving the existing SSE contract
+
+## Implemented: KV block ownership and admission accounting
+
+- Atomic fixed-block allocation, resize, release, block tables, and reference counts
+- Complete sequence-capacity reservation before SSE response headers
+- High/low watermark hysteresis, allocation-failure handling, byte estimates, and metrics
+- Seeded randomized invariant, exhaustion, reuse, fragmentation, and cancellation tests
+
+This allocator is real scheduler state, but Hugging Face still owns the physical
+`DynamicCache` tensors. Physical paged tensor storage and a paged-attention kernel are in
+progress and are not claimed as implemented.
+
 ## In progress: CUDA validation
 
 - Run the gated proof on an identified CUDA device
@@ -44,17 +63,15 @@ owned or free GPU hardware.
 
 ## Planned in dependency order
 
-1. Continuous batching with waiting/running sequence sets and iteration-level admission
-2. Paged KV block allocation, ownership invariants, memory watermarks, and pressure handling
-3. Prefill/decode policies including balanced and chunked prefill
-4. Prometheus metrics, OpenTelemetry tracing, structured logs, and sustained-load benchmarks
-5. Prefix-cache sharing, reference counting, bounded eviction, and TTFT comparison
-6. Rich worker/GPU inventory, suspect health state, fault injection, and multi-process demo
-7. Atomic GPU placement reservations, replication decisions, and demand-aware placement
-8. Multi-GPU execution with `torch.distributed`/NCCL and correctness comparisons
-9. Topology discovery and topology-aware worker-group placement
-10. Profile-guided Triton kernel and CUDA Graph experiments with eager fallbacks
-11. Sustained load, memory-leak, crash, overload, and production-qualification evidence
+1. Physical paged KV tensors, arbitrary-length decode batches, and paged attention
+2. Prometheus metrics, OpenTelemetry tracing, structured logs, and sustained-load benchmarks
+3. Prefix-cache sharing, bounded eviction, and measured TTFT comparison
+4. Rich worker/GPU inventory, suspect health state, fault injection, and multi-process demo
+5. Atomic GPU placement reservations, replication decisions, and demand-aware placement
+6. Multi-GPU execution with `torch.distributed`/NCCL and correctness comparisons
+7. Topology discovery and topology-aware worker-group placement
+8. Profile-guided Triton kernel and CUDA Graph experiments with eager fallbacks
+9. Sustained load, memory-leak, crash, overload, and production-qualification evidence
 
 No planned item is represented as an existing capability in public documentation. GPU and
 multi-GPU performance numbers will appear only after recorded runs on identified hardware.

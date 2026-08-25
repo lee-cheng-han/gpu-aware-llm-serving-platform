@@ -364,7 +364,13 @@ async def generate_stream(body: GenerateRequest, request: Request):
         )
         try:
             await engine.validate_sampling(sampling)
-            engine.reserve(item.request_id, body.prompt, sampling, deadline)
+            engine.reserve(
+                item.request_id,
+                body.prompt,
+                sampling,
+                deadline,
+                prompt_token_count=tokens,
+            )
         except InvalidStopTokenError as exc:
             await state.limiter.release()
             await state.stream_tracker.finish()
@@ -550,4 +556,26 @@ async def metrics(request: Request):
         "max_wait_ms": state.settings.max_wait_ms,
         "max_total_batch_tokens": state.settings.max_total_batch_tokens,
     })
+    if state.token_engine is not None and hasattr(
+        state.token_engine, "scheduler_snapshot"
+    ):
+        token_scheduler = state.token_engine.scheduler_snapshot()
+        snapshot["token_scheduler"] = {
+            "waiting_sequences": token_scheduler.waiting_sequences,
+            "running_sequences": token_scheduler.running_sequences,
+            "iterations": token_scheduler.scheduler_iterations,
+            "prefill_batches": token_scheduler.prefill_batches,
+            "decode_batches": token_scheduler.decode_batches,
+            "max_observed_batch_size": token_scheduler.max_observed_batch_size,
+            "policy": token_scheduler.policy,
+        }
+        snapshot["kv_cache"] = {
+            "kv_blocks_total": token_scheduler.kv_cache.total_blocks,
+            "kv_blocks_used": token_scheduler.kv_cache.used_blocks,
+            "kv_blocks_free": token_scheduler.kv_cache.free_blocks,
+            "kv_cache_bytes_used": token_scheduler.kv_cache.bytes_used,
+            "kv_cache_utilization": token_scheduler.kv_cache.utilization,
+            "kv_allocation_failures": token_scheduler.kv_cache.allocation_failures,
+            "kv_cache_pressure": token_scheduler.kv_cache.pressure,
+        }
     return snapshot

@@ -62,3 +62,30 @@ def test_token_backend_configuration_is_explicit_and_validated(monkeypatch):
         replace(Settings(), model_dtype="int8").validate()
     with pytest.raises(ValueError, match="INFERENCE_BACKEND"):
         replace(Settings(), inference_backend="unknown").validate()
+
+
+def test_continuous_scheduler_and_kv_configuration(monkeypatch):
+    monkeypatch.setenv("MAX_ACTIVE_SEQUENCES", "12")
+    monkeypatch.setenv("TOKEN_MAX_BATCH_SIZE", "6")
+    monkeypatch.setenv("TOKEN_SCHEDULING_POLICY", "decode_first")
+    monkeypatch.setenv("PREFILL_CHUNK_SIZE_TOKENS", "128")
+    monkeypatch.setenv("KV_CACHE_TOTAL_BLOCKS", "256")
+    settings = Settings.from_env()
+    assert settings.max_active_sequences == 12
+    assert settings.token_max_batch_size == 6
+    assert settings.token_scheduling_policy == "decode_first"
+    assert settings.prefill_chunk_size_tokens == 128
+    assert settings.kv_cache_total_blocks == 256
+
+    with pytest.raises(ValueError, match="TOKEN_SCHEDULING_POLICY"):
+        replace(Settings(), token_scheduling_policy="random").validate()
+    with pytest.raises(ValueError, match="watermarks"):
+        replace(
+            Settings(),
+            kv_cache_low_watermark=0.95,
+            kv_cache_high_watermark=0.9,
+        ).validate()
+    with pytest.raises(ValueError, match="TOKEN_MAX_BATCH_SIZE"):
+        replace(
+            Settings(), max_active_sequences=2, token_max_batch_size=3
+        ).validate()

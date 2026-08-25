@@ -7,10 +7,9 @@ baseline passed Ruff, mypy across 48 source files, 129 non-model tests, and the 
 scheduling evaluation. Phase 1 retains those components and adds the token engine described
 below; model tests remain opt-in because they download weights.
 
-The completed local Phase 1 check passes Ruff, mypy across 65 application source files,
-147 non-model tests, three pinned/compatibility model tests, compilation, and the
-deterministic evaluation gate. CUDA validation remains pending because this host exposes no
-usable CUDA device.
+The current local check passes Ruff, mypy across 67 application source files, 165 non-model
+tests, five pinned/compatibility model tests, compilation, and the deterministic evaluation
+gate. CUDA validation remains pending because this host exposes no usable CUDA device.
 
 ## Executable paths
 
@@ -21,9 +20,10 @@ calls one local Hugging Face worker through `asyncio.to_thread`. Compatible requ
 have equal output length and temperature and execute in one complete `model.generate()`
 call.
 
-`POST /v1/generate_stream` reserves concurrency and backend sequence capacity before
-returning headers, then uses explicit full-prompt prefill and one-token autoregressive decode
-through Hugging Face `DynamicCache`. A dedicated executor serializes device operations.
+`POST /v1/generate_stream` reserves concurrency, sequence capacity, and logical KV blocks
+before returning headers. A central scheduler maintains waiting/running sets and issues real
+batched prefill or one-token decode through Hugging Face `DynamicCache`. A dedicated executor
+serializes device operations, and compatible requests share forward passes.
 Disconnect, DELETE, and deadlines share one cancellation signal. An in-flight forward pass
 may finish, but no subsequent token is emitted and private sequence state is always released.
 
@@ -89,8 +89,8 @@ The gateway contracts, bounded queues, explicit state machine, admission, reques
 worker registry, placement policies, runtime protocol, simulated runtime, transport, and
 failure rules are reusable. They should evolve rather than be replaced.
 
-The remaining gaps include whole-request calls in the static scheduler, a single-sequence
-streaming engine rather than continuous scheduling, non-preemptible individual forward
+The remaining gaps include whole-request calls in the static scheduler, physical rather than
+logical KV paging, arbitrary-length decode batches, non-preemptible individual forward
 passes, duplicated request lifecycle types, JSON-only metrics, process-local worker inventory,
 and binary healthy/unhealthy heartbeat handling. Continuous batching,
 custom paged KV allocation, prefix caching, NCCL, topology-aware placement, Triton, and CUDA

@@ -22,8 +22,12 @@
   registered load timeout as the cold-start penalty; it is not a latency guarantee.
 - The non-streaming compatibility path still uses Hugging Face `generate()` and static
   request batching. Streaming uses explicit prefill/decode with `DynamicCache`.
-- There is no PagedAttention, custom KV-cache paging, tensor parallelism, or true continuous
-  batching.
+- Streaming has a true iteration scheduler with dynamically changing waiting/running sets.
+  Real decode batches currently contain only equal-length physical caches; different-length
+  sequences share scheduler iterations but require separate model calls.
+- The KV block allocator enforces logical capacity and ownership, but it does not store the
+  model's physical key/value tensors. There is no PagedAttention, custom tensor paging, or
+  tensor parallelism yet.
 - An active PyTorch forward pass cannot be interrupted immediately. Cancellation prevents
   subsequent decode and emission, then waits for the active operation before cache cleanup.
 - Metrics, queues, and request outcomes are process-local.

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from importlib import import_module
 from typing import Any
 
+from inference.backend import BatchTokenResult
 from inference.sampling import TokenSampler, TorchTokenSampler
 from inference.token_types import GeneratedToken, SamplingParameters, TokenizedPrompt
 from inference.worker import InferenceWorker
@@ -146,6 +147,134 @@ class HuggingFaceTokenBackend:
                 self._cache_length(cache),
             )
 
+    def prefill_batch(
+        self,
+        requests: tuple[tuple[str, TokenizedPrompt, SamplingParameters], ...],
+    ) -> BatchTokenResult:
+        if not requests:
+            return BatchTokenResult({})
+        if len(requests) == 1:
+            sequence_id, prompt, parameters = requests[0]
+            return BatchTokenResult(
+                {sequence_id: self.prefill(sequence_id, prompt, parameters)}
+            )
+        self._require_active()
+        if len({sequence_id for sequence_id, _, _ in requests}) != len(requests):
+            raise ValueError("prefill batch contains duplicate sequence identifiers")
+        if any(sequence_id in self._sequences for sequence_id, _, _ in requests):
+            raise ValueError("prefill batch contains an existing sequence")
+        torch = import_module("torch")
+        dynamic_cache = import_module("transformers").DynamicCache
+        self.load_model()
+        with self.worker._execution_lock, torch.inference_mode():
+            model = self.worker.model
+            tokenizer = self.worker.tokenizer
+            if model is None or tokenizer is None:
+                raise RuntimeError("model components are unavailable after model load")
+            width = max(len(prompt.token_ids) for _, prompt, _ in requests)
+            pad_id = tokenizer.pad_token_id
+            if pad_id is None:
+                raise RuntimeError("tokenizer does not define a padding token")
+            rows = []
+            masks = []
+            for _, prompt, _ in requests:
+                padding = width - len(prompt.token_ids)
+                rows.append([pad_id] * padding + list(prompt.token_ids))
+                masks.append([0] * padding + [1] * len(prompt.token_ids))
+            input_ids = torch.tensor(rows, dtype=torch.long, device=self.worker.device)
+            attention_mask = torch.tensor(
+                masks, dtype=torch.long, device=self.worker.device
+            )
+            cache_position = torch.arange(width, dtype=torch.long, device=self.worker.device)
+            outputs = model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                past_key_values=dynamic_cache(),
+                cache_position=cache_position,
+                use_cache=True,
+            )
+            caches = outputs.past_key_values.batch_split(len(requests), 1)
+            result: dict[str, GeneratedToken] = {}
+            for row, ((sequence_id, _, parameters), cache) in enumerate(
+                zip(requests, caches, strict=True)
+            ):
+                token_id = self._token(outputs.logits[row : row + 1, -1, :], parameters, 0)
+                self._sequences[sequence_id] = _SequenceCache(
+                    cache=cache,
+                    attention_mask=attention_mask[row : row + 1],
+                    cache_position=cache_position[-1:] + 1,
+                    last_token_id=token_id,
+                )
+                result[sequence_id] = GeneratedToken(
+                    token_id,
+                    self._decode_text(token_id),
+                    0,
+                    self._cache_length(cache),
+                )
+            return BatchTokenResult(result)
+
+    def prefill_chunk(
+        self,
+        sequence_id: str,
+        prompt: TokenizedPrompt,
+        parameters: SamplingParameters,
+        final: bool,
+    ) -> GeneratedToken | None:
+        """Advance a prompt cache without sampling until the final prompt chunk."""
+        self._require_active()
+        torch = import_module("torch")
+        dynamic_cache = import_module("transformers").DynamicCache
+        self.load_model()
+        with self.worker._execution_lock, torch.inference_mode():
+            model = self.worker.model
+            if model is None:
+                raise RuntimeError("model is unavailable after model load")
+            existing = self._sequences.get(sequence_id)
+            input_ids = torch.tensor(
+                [prompt.token_ids], dtype=torch.long, device=self.worker.device
+            )
+            if existing is None:
+                attention_mask = torch.ones_like(input_ids)
+                start = 0
+                cache = dynamic_cache()
+            else:
+                attention_mask = torch.cat(
+                    (existing.attention_mask, torch.ones_like(input_ids)), dim=-1
+                )
+                start = self._cache_length(existing.cache)
+                cache = existing.cache
+            cache_position = torch.arange(
+                start,
+                start + input_ids.shape[1],
+                dtype=torch.long,
+                device=self.worker.device,
+            )
+            outputs = model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                past_key_values=cache,
+                cache_position=cache_position,
+                use_cache=True,
+            )
+            cache = outputs.past_key_values
+            sequence = _SequenceCache(
+                cache=cache,
+                attention_mask=attention_mask,
+                cache_position=cache_position[-1:] + 1,
+                last_token_id=-1,
+            )
+            self._sequences[sequence_id] = sequence
+            if not final:
+                return None
+            token_id = self._token(outputs.logits[:, -1, :], parameters, 0)
+            sequence.last_token_id = token_id
+            return GeneratedToken(
+                token_id,
+                self._decode_text(token_id),
+                0,
+                self._cache_length(cache),
+            )
+
     def decode(
         self,
         sequence_id: str,
@@ -192,6 +321,78 @@ class HuggingFaceTokenBackend:
                 index,
                 self._cache_length(sequence.cache),
             )
+
+    def decode_batch(
+        self,
+        requests: tuple[tuple[str, SamplingParameters, int], ...],
+    ) -> BatchTokenResult:
+        if not requests:
+            return BatchTokenResult({})
+        if len(requests) == 1:
+            sequence_id, parameters, index = requests[0]
+            return BatchTokenResult(
+                {sequence_id: self.decode(sequence_id, parameters, index)}
+            )
+        torch = import_module("torch")
+        dynamic_cache = import_module("transformers").DynamicCache
+        sequences = [self._sequences[sequence_id] for sequence_id, _, _ in requests]
+        cache_lengths = {self._cache_length(sequence.cache) for sequence in sequences}
+        if len(cache_lengths) != 1:
+            raise ValueError("decode batches require equal physical cache lengths")
+        with self.worker._execution_lock, torch.inference_mode():
+            model = self.worker.model
+            if model is None:
+                raise RuntimeError("model is unavailable during decode")
+            input_ids = torch.tensor(
+                [[sequence.last_token_id] for sequence in sequences],
+                dtype=torch.long,
+                device=self.worker.device,
+            )
+            attention_mask = torch.cat(
+                [
+                    torch.cat(
+                        (
+                            sequence.attention_mask,
+                            torch.ones(
+                                (1, 1), dtype=torch.long, device=self.worker.device
+                            ),
+                        ),
+                        dim=-1,
+                    )
+                    for sequence in sequences
+                ],
+                dim=0,
+            )
+            cache = dynamic_cache.from_batch_splits(
+                [sequence.cache for sequence in sequences]
+            )
+            cache_position = sequences[0].cache_position
+            outputs = model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                past_key_values=cache,
+                cache_position=cache_position,
+                use_cache=True,
+            )
+            caches = outputs.past_key_values.batch_split(len(requests), 1)
+            result: dict[str, GeneratedToken] = {}
+            for row, ((sequence_id, parameters, index), sequence, split_cache) in enumerate(
+                zip(requests, sequences, caches, strict=True)
+            ):
+                token_id = self._token(
+                    outputs.logits[row : row + 1, -1, :], parameters, index
+                )
+                sequence.cache = split_cache
+                sequence.attention_mask = attention_mask[row : row + 1]
+                sequence.cache_position = sequence.cache_position + 1
+                sequence.last_token_id = token_id
+                result[sequence_id] = GeneratedToken(
+                    token_id,
+                    self._decode_text(token_id),
+                    index,
+                    self._cache_length(split_cache),
+                )
+            return BatchTokenResult(result)
 
     def release_sequence(self, sequence_id: str) -> None:
         self._sequences.pop(sequence_id, None)

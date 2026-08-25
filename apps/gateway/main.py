@@ -15,6 +15,7 @@ from apps.gateway.config import Settings
 from apps.gateway.limits import ConcurrencyLimiter, StreamTracker
 from apps.gateway.metrics import Metrics
 from inference.backend import BackendBundle, BackendExecutor
+from inference.kv_cache import KVBlockAllocator
 from inference.token_engine import TokenGenerationEngine
 from inference.worker import InferenceWorker
 from runtime.huggingface import HuggingFaceTokenBackend
@@ -92,6 +93,16 @@ def create_app(
         app.state.token_engine = TokenGenerationEngine(
             BackendBundle(backend, BackendExecutor()),
             settings.max_active_sequences,
+            max_batch_size=settings.token_max_batch_size,
+            scheduling_policy=settings.token_scheduling_policy,
+            kv_allocator=KVBlockAllocator(
+                settings.kv_cache_total_blocks,
+                settings.kv_cache_block_size_tokens,
+                settings.kv_cache_bytes_per_block,
+                settings.kv_cache_high_watermark,
+                settings.kv_cache_low_watermark,
+            ),
+            prefill_chunk_size_tokens=settings.prefill_chunk_size_tokens,
         )
     app.state.metrics = Metrics(settings.metrics_sample_limit)
     app.state.request_queue = RequestQueue(settings.max_queue_size)

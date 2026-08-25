@@ -20,6 +20,18 @@ The complete workload and raw trials are in
 No GPU hardware measurement has been run. GPU validation remains pending and no CPU result
 should be generalized to CUDA.
 
+## Continuous-scheduler correctness evidence
+
+The optional pinned-model suite proves that two concurrent sequences share one real batched
+prefill and one real batched decode operation, while matching Hugging Face greedy reference
+tokens. It also proves that bounded prompt chunks grow a real cache and produce the same
+first token as full prefill. Download-free tests cover dynamic joining, independent
+completion/failure/cancellation, cache exhaustion before streaming, atomic rollback,
+watermark hysteresis, shared references, and 500 seeded randomized allocator transitions.
+
+These are correctness results, not a throughput improvement claim. A new measured
+multi-concurrency benchmark is still required before claiming performance gains.
+
 The versioned deterministic baseline is available at
 [`benchmark/results/simulated/heterogeneous/report.md`](../benchmark/results/simulated/heterogeneous/report.md).
 It is a control-plane regression fixture, not a GPU-aware platform measurement.

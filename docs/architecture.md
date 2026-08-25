@@ -12,13 +12,13 @@ Client
 FastAPI gateway (`apps.gateway`)
   |
   +--> validation and bounded HTTP concurrency
-  +--> single-request SSE prefill/decode ----------+
+  +--> continuous SSE token scheduler -------------+
   |                                                |
   v                                                v
-bounded asyncio queue                    dedicated backend executor
+bounded asyncio queue               waiting/running sequence sets
   |                                                ^
   v                                                |
-serial or dynamic local scheduler ---> shared Hugging Face CPU worker
+serial or dynamic local scheduler -> batched prefill/decode -> shared HF worker
   |
   v
 bounded in-memory metrics
@@ -31,8 +31,9 @@ generation share one execution lock, so the one-worker experiment never overlaps
 calls.
 
 This remains a modular monolith. The non-streaming compatibility route retains the proven
-static scheduler; streaming uses explicit prefill and one-token decode with a non-paged
-Hugging Face `DynamicCache`. Device calls use one dedicated executor thread and never hold
+static scheduler; streaming uses continuous iteration scheduling, batched prefill/decode,
+logical KV block admission, and non-paged Hugging Face `DynamicCache` tensors. Device calls
+use one dedicated executor thread and never hold
 application locks across awaits. When `PLATFORM_API_ENABLED=true`, `/v1/platform/generate` executes the
 complete gateway-to-control-plane path through deterministic in-process simulated workers.
 The same control-plane interface can now address authenticated HTTP worker handles in

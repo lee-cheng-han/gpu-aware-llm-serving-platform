@@ -3,15 +3,17 @@
 ## Why this is not mini-vLLM
 
 This project studies a much smaller problem. It is not a replacement for vLLM, TGI, or
-Triton. It does not implement PagedAttention, GPU KV-cache paging, tensor parallelism,
-continuous batching, or production-scale distributed serving.
+Triton. It does not implement PagedAttention, GPU KV tensor paging, tensor parallelism, or
+production-scale distributed serving.
 
 ## Why no PagedAttention
 
 PagedAttention solves GPU KV-cache allocation and fragmentation. The non-streaming path uses
 whole Hugging Face `generate()` calls. Streaming now uses real prefill/decode with the
 framework's `DynamicCache`, which exposes token boundaries without claiming a custom
-allocator. Paged allocation remains a separate phase.
+allocator. A fixed-block scheduler allocator now provides capacity, ownership, reference
+counts, and pressure behavior. The physical tensors remain framework-managed, so the block
+tables must not be described as a PagedAttention implementation.
 
 ## Why CPU-only local model
 
@@ -56,11 +58,12 @@ is skipped. If generation is already running, its result is discarded after the 
 model call returns. Graceful shutdown rejects queued work and waits for the active call so
 all scheduler result handles reach a terminal state.
 
-## Why streaming is token-level but single-request only
+## Why continuous batches still require compatible cache lengths
 
-The SSE endpoint bypasses the static batching queue and uses explicit prefill/decode.
-Batched, interleaved token streaming requires a continuous scheduler that admits and removes
-sequences at token boundaries. Batching benchmarks therefore still use `/v1/generate`.
+The SSE endpoint uses a central continuous scheduler and real batched forward passes. Standard
+`DynamicCache` can combine sequences whose physical cache tensors have equal lengths. A late
+joiner with a shorter cache enters the running set immediately but uses a separate compatible
+decode group until physical paging removes that constraint.
 
 Streaming admission and backend capacity are reserved before headers and released on every
 terminal path. Cancellation is checked around every device call and emission. PyTorch

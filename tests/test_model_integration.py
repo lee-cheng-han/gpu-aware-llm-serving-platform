@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import time
 
 import httpx
 import pytest
@@ -9,7 +10,7 @@ from apps.gateway.config import Settings
 from apps.gateway.main import create_app
 from inference.backend import BackendBundle, BackendExecutor
 from inference.token_engine import TokenGenerationEngine
-from inference.token_types import SamplingParameters
+from inference.token_types import SamplingParameters, TokenizedPrompt
 from inference.worker import InferenceWorker
 from runtime.huggingface import HuggingFaceTokenBackend
 
@@ -74,6 +75,108 @@ def test_smollm_manual_prefill_decode_matches_greedy_generate():
         executor.run(backend.release_sequence, "manual")
         executor.run(backend.shutdown)
         executor.shutdown()
+
+
+def test_smollm_real_batched_decode_and_chunked_prefill_match_reference():
+    model_id = "HuggingFaceTB/SmolLM2-135M-Instruct"
+    revision = "12fd25f77366fa6b3b4b768ec3050bf629380bac"
+    worker = InferenceWorker(model_id, revision, "cpu", "float32")
+    backend = HuggingFaceTokenBackend(worker)
+    executor = BackendExecutor("model-batch-integration")
+    prompts = ("Hello", "Explain cache memory")
+    parameters = SamplingParameters(2, temperature=0)
+    try:
+        tokenized = [executor.run(backend.tokenize, prompt) for prompt in prompts]
+        import torch
+
+        encoded = worker.tokenizer(list(prompts), return_tensors="pt", padding=True)
+        with worker._execution_lock, torch.inference_mode():
+            expected = worker.model.generate(
+                **encoded,
+                max_new_tokens=2,
+                do_sample=False,
+                pad_token_id=worker.tokenizer.pad_token_id,
+            )[:, encoded["input_ids"].shape[1] :].tolist()
+
+        prefill = executor.run(
+            backend.prefill_batch,
+            tuple(
+                (f"batch-{index}", prompt, parameters)
+                for index, prompt in enumerate(tokenized)
+            ),
+        )
+        decoded = executor.run(
+            backend.decode_batch,
+            tuple((f"batch-{index}", parameters, 1) for index in range(2)),
+        )
+        actual = [
+            [
+                prefill.tokens[f"batch-{index}"].token_id,
+                decoded.tokens[f"batch-{index}"].token_id,
+            ]
+            for index in range(2)
+        ]
+        assert actual == expected
+
+        full_prompt = tokenized[1]
+        first_chunk = TokenizedPrompt(full_prompt.token_ids[:1])
+        second_chunk = TokenizedPrompt(full_prompt.token_ids[1:])
+        assert executor.run(
+            backend.prefill_chunk, "chunked", first_chunk, parameters, False
+        ) is None
+        chunked = executor.run(
+            backend.prefill_chunk, "chunked", second_chunk, parameters, True
+        )
+        assert chunked is not None
+        assert chunked.token_id == expected[1][0]
+        assert chunked.cache_tokens == len(full_prompt.token_ids)
+    finally:
+        for sequence_id in ("batch-0", "batch-1", "chunked"):
+            executor.run(backend.release_sequence, sequence_id)
+        executor.run(backend.shutdown)
+        executor.shutdown()
+
+
+async def test_smollm_continuous_engine_batches_concurrent_sequences():
+    worker = InferenceWorker(
+        "HuggingFaceTB/SmolLM2-135M-Instruct",
+        "12fd25f77366fa6b3b4b768ec3050bf629380bac",
+        "cpu",
+        "float32",
+    )
+    backend = HuggingFaceTokenBackend(worker)
+    engine = TokenGenerationEngine(
+        BackendBundle(backend, BackendExecutor("real-continuous-engine")),
+        max_active_sequences=2,
+        max_batch_size=2,
+        scheduling_policy="balanced",
+    )
+    prompts = {"first": "Hello", "second": "World"}
+    try:
+        for request_id, prompt in prompts.items():
+            prompt_tokens = await engine.count_prompt_tokens(prompt)
+            engine.reserve(
+                request_id,
+                prompt,
+                SamplingParameters(2, temperature=0),
+                time.monotonic() + 30,
+                prompt_tokens,
+            )
+
+        async def collect(request_id):
+            return [event async for event in engine.stream(request_id)]
+
+        first, second = await asyncio.gather(collect("first"), collect("second"))
+        assert len(first) == len(second) == 3
+        assert first[-1].finish_reason.value == "length"
+        assert second[-1].finish_reason.value == "length"
+        snapshot = engine.scheduler_snapshot()
+        assert snapshot.prefill_batches == 1
+        assert snapshot.decode_batches == 1
+        assert snapshot.max_observed_batch_size == 2
+        assert snapshot.kv_cache.used_blocks == 0
+    finally:
+        await engine.shutdown()
 
 
 async def test_smollm_sse_api_honors_eos_and_stop_tokens():
