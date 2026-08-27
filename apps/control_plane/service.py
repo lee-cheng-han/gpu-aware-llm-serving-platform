@@ -81,6 +81,8 @@ class ControlPlane:
             if isinstance(exc, WorkerDispatchError):
                 raise
             raise WorkerDispatchError("selected worker rejected the handoff") from exc
+        finally:
+            self.scheduler.release_assignment(request.request_id)
         return assignment
 
     def cancel(self, request_id: str) -> bool:

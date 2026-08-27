@@ -177,4 +177,8 @@ class SimulatedGpuRuntime:
             self.config.total_memory_bytes - used,
             used,
             used,
+            0,
+            "simulated",
+            "simulated",
+            "deterministic-v1",
         )

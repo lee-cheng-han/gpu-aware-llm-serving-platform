@@ -20,7 +20,11 @@ from serving_platform.domain import (
 )
 from serving_platform.registry import InMemoryModelRegistry, InMemoryWorkerRegistry
 from serving_platform.request_state.interfaces import RequestStateStore
-from serving_platform.routing import ModelResidencyAwarePolicy, NoEligibleWorker
+from serving_platform.routing import (
+    AtomicPlacementReservations,
+    DemandAwarePlacementPolicy,
+    NoEligibleWorker,
+)
 from serving_platform.scheduling import WeightedFairRequestQueue
 
 
@@ -210,8 +214,13 @@ def build_local_simulated_pipeline(
     ]
     admission = TenantAdmissionController(tenants, max_queue_size)
     fair_queue = WeightedFairRequestQueue(tenants)
+    reservations = AtomicPlacementReservations(registry, models)
     control_plane = ControlPlane(
-        GlobalScheduler(registry, ModelResidencyAwarePolicy(models)),
+        GlobalScheduler(
+            registry,
+            DemandAwarePlacementPolicy(models, reservations.demand),
+            reservations=reservations,
+        ),
         directory,
         models,
         requests,

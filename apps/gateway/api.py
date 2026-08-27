@@ -3,11 +3,12 @@ import json
 import time
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from apps.control_plane import PlatformAdmissionError, PlatformExecutionError
 from apps.gateway.errors import APIError
 from apps.gateway.limits import validate_request
+from apps.gateway.observability import prometheus_text
 from apps.gateway.schemas import (
     GenerateRequest,
     GenerateResponse,
@@ -578,4 +579,36 @@ async def metrics(request: Request):
             "kv_allocation_failures": token_scheduler.kv_cache.allocation_failures,
             "kv_cache_pressure": token_scheduler.kv_cache.pressure,
         }
+        prefix_cache = getattr(token_scheduler, "prefix_cache", None)
+        if prefix_cache is not None:
+            snapshot["prefix_cache"] = {
+                "entries": prefix_cache.entries,
+                "cached_tokens": prefix_cache.cached_tokens,
+                "max_entries": prefix_cache.max_entries,
+                "max_tokens": prefix_cache.max_tokens,
+                "hits": prefix_cache.hits,
+                "misses": prefix_cache.misses,
+                "hit_rate": prefix_cache.hit_rate,
+                "insertions": prefix_cache.insertions,
+                "evictions": prefix_cache.evictions,
+                "bypasses": prefix_cache.bypasses,
+            }
+    pipeline = state.platform_pipeline
+    reservations = (
+        pipeline.control_plane.scheduler.reservations
+        if pipeline is not None
+        else None
+    )
+    if reservations is not None:
+        reservation_snapshot = reservations.snapshot()
+        snapshot["placement_reservations"] = {
+            "active": reservation_snapshot.active_reservations,
+            "reserved_memory_bytes": reservation_snapshot.reserved_memory_bytes,
+            "demand_by_model": reservation_snapshot.demand_by_model,
+        }
+    if "text/plain" in request.headers.get("accept", ""):
+        return PlainTextResponse(
+            prometheus_text(snapshot),
+            media_type="text/plain; version=0.0.4",
+        )
     return snapshot

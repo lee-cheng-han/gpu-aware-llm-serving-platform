@@ -14,8 +14,11 @@ from apps.gateway.auth import ApiKeyAuthenticator, parse_api_keys
 from apps.gateway.config import Settings
 from apps.gateway.limits import ConcurrencyLimiter, StreamTracker
 from apps.gateway.metrics import Metrics
+from apps.gateway.observability import observe_request
+from apps.gateway.otel import configure_opentelemetry
 from inference.backend import BackendBundle, BackendExecutor
 from inference.kv_cache import KVBlockAllocator
+from inference.prefix_cache import PrefixCache
 from inference.token_engine import TokenGenerationEngine
 from inference.worker import InferenceWorker
 from runtime.huggingface import HuggingFaceTokenBackend
@@ -61,8 +64,19 @@ def create_app(
                 await task
         if app.state.token_engine is not None:
             await app.state.token_engine.shutdown()
+        if app.state.otel is not None:
+            await asyncio.to_thread(app.state.otel.shutdown)
 
     app = FastAPI(title="GPU-Aware LLM Serving Platform", version="1.0.0", lifespan=lifespan)
+    app.state.otel = configure_opentelemetry(
+        settings.otel_service_name,
+        settings.otel_exporter_otlp_endpoint,
+    )
+
+    @app.middleware("http")
+    async def request_observability(request, call_next):
+        tracer = app.state.otel.tracer if app.state.otel is not None else None
+        return await observe_request(request, call_next, logger, tracer)
     origins = [
         origin.strip()
         for origin in settings.cors_allowed_origins.split(",")
@@ -103,6 +117,10 @@ def create_app(
                 settings.kv_cache_low_watermark,
             ),
             prefill_chunk_size_tokens=settings.prefill_chunk_size_tokens,
+            prefix_cache=PrefixCache(
+                settings.prefix_cache_max_entries,
+                settings.prefix_cache_max_tokens,
+            ),
         )
     app.state.metrics = Metrics(settings.metrics_sample_limit)
     app.state.request_queue = RequestQueue(settings.max_queue_size)

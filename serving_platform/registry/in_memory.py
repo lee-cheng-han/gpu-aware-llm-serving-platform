@@ -39,11 +39,19 @@ class InMemoryWorkerRegistry:
     def __init__(
         self,
         heartbeat_timeout_seconds: float = 30,
+        suspect_after_seconds: float | None = None,
         clock: Callable[[], float] = time.monotonic,
     ):
         if heartbeat_timeout_seconds <= 0:
             raise ValueError("heartbeat timeout must be positive")
         self.heartbeat_timeout_seconds = heartbeat_timeout_seconds
+        self.suspect_after_seconds = (
+            heartbeat_timeout_seconds / 2
+            if suspect_after_seconds is None
+            else suspect_after_seconds
+        )
+        if not 0 < self.suspect_after_seconds < heartbeat_timeout_seconds:
+            raise ValueError("suspect threshold must be below the heartbeat timeout")
         self._clock = clock
         self._workers: dict[str, WorkerState] = {}
         self._lock = RLock()
@@ -62,6 +70,9 @@ class InMemoryWorkerRegistry:
             snapshot = deepcopy(worker)
             snapshot.health_status = HealthStatus.HEALTHY
             snapshot.last_heartbeat = self._clock()
+            snapshot.heartbeat_sequence = 0
+            snapshot.consecutive_failures = 0
+            snapshot.last_error_code = None
             self._workers[worker.worker_id] = snapshot
 
     def heartbeat(self, worker: WorkerState) -> None:
@@ -74,21 +85,45 @@ class InMemoryWorkerRegistry:
             snapshot = deepcopy(worker)
             snapshot.health_status = HealthStatus.HEALTHY
             snapshot.last_heartbeat = self._clock()
+            snapshot.heartbeat_sequence = current.heartbeat_sequence + 1
+            snapshot.consecutive_failures = 0
+            snapshot.last_error_code = None
             self._workers[worker.worker_id] = snapshot
 
     def unregister(self, worker_id: str) -> None:
         with self._lock:
             self._workers.pop(worker_id, None)
 
+    def mark_suspect(self, worker_id: str, error_code: str) -> None:
+        if not error_code:
+            raise ValueError("worker error code is required")
+        with self._lock:
+            worker = self._workers.get(worker_id)
+            if worker is None:
+                raise KeyError(f"unknown worker: {worker_id}")
+            if worker.health_status in {HealthStatus.UNHEALTHY, HealthStatus.STOPPED}:
+                return
+            worker.health_status = HealthStatus.SUSPECT
+            worker.consecutive_failures += 1
+            worker.last_error_code = error_code
+
     def expire_stale(self) -> Sequence[str]:
         now = self._clock()
         expired: list[str] = []
         with self._lock:
             for worker in self._workers.values():
-                if (
-                    worker.health_status == HealthStatus.HEALTHY
-                    and now - worker.last_heartbeat > self.heartbeat_timeout_seconds
+                age = now - worker.last_heartbeat
+                if worker.health_status in {HealthStatus.HEALTHY, HealthStatus.SUSPECT} and (
+                    age > self.heartbeat_timeout_seconds
                 ):
                     worker.health_status = HealthStatus.UNHEALTHY
+                    worker.consecutive_failures += 1
+                    worker.last_error_code = "heartbeat_expired"
                     expired.append(worker.worker_id)
+                elif worker.health_status == HealthStatus.HEALTHY and (
+                    age > self.suspect_after_seconds
+                ):
+                    worker.health_status = HealthStatus.SUSPECT
+                    worker.consecutive_failures += 1
+                    worker.last_error_code = "heartbeat_delayed"
         return tuple(sorted(expired))

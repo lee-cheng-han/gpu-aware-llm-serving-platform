@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 from inference.backend import BackendBundle, BatchTokenResult
 from inference.kv_cache import KVBlockAllocator, KVCacheCapacityError, KVCacheSnapshot
+from inference.prefix_cache import PrefixCache, PrefixCacheSnapshot
 from inference.token_scheduling import (
     PrefillDecodePolicy,
     TokenResourceSnapshot,
@@ -41,6 +42,9 @@ class TokenSchedulerSnapshot:
     max_observed_batch_size: int
     policy: str
     kv_cache: KVCacheSnapshot
+    prefix_cache: PrefixCacheSnapshot = field(
+        default_factory=lambda: PrefixCache().snapshot()
+    )
 
 
 @dataclass(frozen=True)
@@ -73,6 +77,7 @@ class TokenGenerationEngine:
         scheduling_policy: str = "decode_first",
         kv_allocator: KVBlockAllocator | None = None,
         prefill_chunk_size_tokens: int = 0,
+        prefix_cache: PrefixCache | None = None,
     ) -> None:
         if max_active_sequences <= 0:
             raise ValueError("maximum active sequences must be positive")
@@ -90,6 +95,7 @@ class TokenGenerationEngine:
             total_blocks=max(1024, max_active_sequences * 16),
             block_size_tokens=16,
         )
+        self.prefix_cache = prefix_cache or PrefixCache()
         self._active: dict[str, _ScheduledSequence] = {}
         self._finished: dict[str, _ScheduledSequence] = {}
         self._scheduler_task: asyncio.Task[None] | None = None
@@ -168,6 +174,7 @@ class TokenGenerationEngine:
             self._max_observed_batch_size,
             self.policy.name.value,
             self.kv_allocator.snapshot(),
+            self.prefix_cache.snapshot(),
         )
 
     @staticmethod
@@ -280,6 +287,24 @@ class TokenGenerationEngine:
                     )
                 runtime.state.phase = SequencePhase.PREFILL
                 runtime.backend_created = True
+                restore = getattr(self.backend, "restore_prefix", None)
+                cached = (
+                    self.prefix_cache.get(runtime.tokenized.token_ids)
+                    if callable(restore)
+                    else None
+                )
+                if cached is not None:
+                    started = time.perf_counter()
+                    token = await self.executor.run_async(
+                        restore,
+                        request_id,
+                        cached,
+                        runtime.state.sampling,
+                    )
+                    runtime.state.prefill_ms += (time.perf_counter() - started) * 1000
+                    runtime.cache_tokens = token.cache_tokens
+                    await self._accept_token(runtime, token, await self._get_eos_ids())
+                    continue
                 batch.append(runtime)
             except BaseException as exc:
                 await self._fail(runtime, exc)
@@ -322,6 +347,7 @@ class TokenGenerationEngine:
             runtime.state.prefill_ms += elapsed_ms
             token = outcome.tokens[runtime.state.request_id]
             runtime.cache_tokens = token.cache_tokens
+            await self._store_prefix(runtime)
             await self._accept_token(runtime, token, eos_ids)
 
     async def _run_prefill_chunks(self, batch: list[_ScheduledSequence]) -> None:
@@ -366,7 +392,19 @@ class TokenGenerationEngine:
             self._max_observed_batch_size = max(self._max_observed_batch_size, 1)
             if token is not None:
                 runtime.cache_tokens = token.cache_tokens
+                await self._store_prefix(runtime)
                 await self._accept_token(runtime, token, eos_ids)
+
+    async def _store_prefix(self, runtime: _ScheduledSequence) -> None:
+        if not self.prefix_cache.enabled or runtime.tokenized is None:
+            return
+        snapshot_method = getattr(self.backend, "snapshot_prefix", None)
+        if not callable(snapshot_method):
+            return
+        snapshot = await self.executor.run_async(
+            snapshot_method, runtime.state.request_id
+        )
+        self.prefix_cache.put(runtime.tokenized.token_ids, snapshot)
 
     def _prefill_fallback(
         self,
@@ -554,5 +592,6 @@ class TokenGenerationEngine:
         else:
             for runtime in tuple(self._active.values()):
                 await self._complete(runtime, FinishReason.CANCELLED)
+        self.prefix_cache.clear()
         await self.executor.run_async(self.backend.shutdown)
         self.executor.shutdown()

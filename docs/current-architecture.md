@@ -7,9 +7,12 @@ baseline passed Ruff, mypy across 48 source files, 129 non-model tests, and the 
 scheduling evaluation. Phase 1 retains those components and adds the token engine described
 below; model tests remain opt-in because they download weights.
 
-The current local check passes Ruff, mypy across 67 application source files, 165 non-model
-tests, five pinned/compatibility model tests, compilation, and the deterministic evaluation
-gate. CUDA validation remains pending because this host exposes no usable CUDA device.
+The latest download-free local check passes Ruff, mypy across its 51 configured source
+files, 185 tests with one environment-dependent skip, compilation, and both deterministic
+evaluation gates. A separate optional integration test exported a real protobuf span to a
+temporary local OTLP/HTTP collector. Five pinned/compatibility model tests were recorded in the earlier CPU
+proof; the newly added prefix-restore model test remains opt-in and has not been recorded on
+this host. CUDA validation remains pending because this host exposes no usable CUDA device.
 
 ## Executable paths
 
@@ -73,9 +76,12 @@ to one supervisor instance.
 
 ## Metrics, tests, and deployment
 
-The JSON metrics endpoint reports bounded-sample latency, TTFT, queue delay, throughput,
-outcomes, batch sizes, rejection reasons, and model execution counts. It is not yet a
-Prometheus or OpenTelemetry endpoint.
+The metrics endpoint reports bounded-sample latency, TTFT, queue delay, throughput,
+outcomes, batch sizes, rejection reasons, token scheduler state, logical KV pressure, and
+prefix-cache behavior. JSON remains the compatibility representation; `Accept: text/plain`
+selects dependency-free Prometheus exposition. W3C trace IDs correlate response headers and
+structured HTTP logs. An optional OpenTelemetry SDK path exports batched OTLP/HTTP server
+spans and flushes them during shutdown; it is disabled by default and guards remote targets.
 
 Normal tests require neither model downloads nor GPUs. Optional model tests exercise real
 Hugging Face inference. Deterministic simulations validate routing and fairness without
@@ -91,7 +97,7 @@ failure rules are reusable. They should evolve rather than be replaced.
 
 The remaining gaps include whole-request calls in the static scheduler, physical rather than
 logical KV paging, arbitrary-length decode batches, non-preemptible individual forward
-passes, duplicated request lifecycle types, JSON-only metrics, process-local worker inventory,
-and binary healthy/unhealthy heartbeat handling. Continuous batching,
-custom paged KV allocation, prefix caching, NCCL, topology-aware placement, Triton, and CUDA
-Graphs are not implemented.
+passes, duplicated request lifecycle types, and process-local coordination. Exact-prefix
+reuse, staged worker health, rich inventory, local atomic placement reservations, and OTLP
+export are implemented, while partial-prefix page sharing, NCCL, topology-aware placement,
+Triton, and CUDA Graphs are not.

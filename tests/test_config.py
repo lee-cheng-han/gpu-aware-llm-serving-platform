@@ -89,3 +89,33 @@ def test_continuous_scheduler_and_kv_configuration(monkeypatch):
         replace(
             Settings(), max_active_sequences=2, token_max_batch_size=3
         ).validate()
+
+
+def test_prefix_cache_can_be_bounded_or_disabled(monkeypatch):
+    monkeypatch.setenv("PREFIX_CACHE_MAX_ENTRIES", "8")
+    monkeypatch.setenv("PREFIX_CACHE_MAX_TOKENS", "512")
+    settings = Settings.from_env()
+    assert settings.prefix_cache_max_entries == 8
+    assert settings.prefix_cache_max_tokens == 512
+    replace(settings, prefix_cache_max_entries=0, prefix_cache_max_tokens=0).validate()
+    with pytest.raises(ValueError, match="must both be zero or positive"):
+        replace(settings, prefix_cache_max_entries=0).validate()
+
+
+def test_telemetry_defaults_off_and_remote_export_requires_opt_in(monkeypatch):
+    settings = Settings.from_env()
+    assert settings.otel_exporter_otlp_endpoint == ""
+    replace(
+        settings,
+        otel_exporter_otlp_endpoint="http://localhost:4318/v1/traces",
+    ).validate()
+    with pytest.raises(ValueError, match="remote telemetry"):
+        replace(
+            settings,
+            otel_exporter_otlp_endpoint="https://telemetry.example/v1/traces",
+        ).validate()
+    replace(
+        settings,
+        otel_exporter_otlp_endpoint="https://telemetry.example/v1/traces",
+        allow_remote_telemetry=True,
+    ).validate()

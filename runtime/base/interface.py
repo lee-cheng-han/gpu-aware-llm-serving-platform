@@ -13,6 +13,10 @@ class RuntimeCapacity:
     available_memory_bytes: int | None
     allocated_memory_bytes: int | None = None
     reserved_memory_bytes: int | None = None
+    device_index: int | None = None
+    compute_capability: str | None = None
+    driver_version: str | None = None
+    runtime_version: str | None = None
 
 
 @dataclass(frozen=True)

@@ -6,6 +6,7 @@ from collections.abc import Callable
 from serving_platform.domain import Assignment, RequestRecord, RequestState
 from serving_platform.registry.interfaces import WorkerRegistry
 from serving_platform.routing import NoEligibleWorker, RoutingPolicy
+from serving_platform.routing.reservations import AtomicPlacementReservations
 
 
 class RequestDeadlineExceeded(TimeoutError):
@@ -20,10 +21,12 @@ class GlobalScheduler:
         registry: WorkerRegistry,
         policy: RoutingPolicy,
         clock: Callable[[], float] = time.monotonic,
+        reservations: AtomicPlacementReservations | None = None,
     ):
         self.registry = registry
         self.policy = policy
         self._clock = clock
+        self.reservations = reservations
 
     def now(self) -> float:
         return self._clock()
@@ -36,7 +39,11 @@ class GlobalScheduler:
             request.transition(RequestState.TIMED_OUT, now)
             raise RequestDeadlineExceeded("request deadline expired before assignment")
 
-        decision = self.policy.select(request, self.registry.list())
+        decision = (
+            self.reservations.select_and_reserve(request, self.policy)
+            if self.reservations is not None
+            else self.policy.select(request, self.registry.list())
+        )
         request.assigned_worker_id = decision.selected_worker_id
         request.attempt_count += 1
         request.transition(RequestState.ASSIGNED, now)
@@ -53,6 +60,9 @@ class GlobalScheduler:
             },
             assigned_at=now,
         )
+
+    def release_assignment(self, request_id: str) -> bool:
+        return self.reservations.release(request_id) if self.reservations else False
 
 
 __all__ = ["GlobalScheduler", "NoEligibleWorker", "RequestDeadlineExceeded"]

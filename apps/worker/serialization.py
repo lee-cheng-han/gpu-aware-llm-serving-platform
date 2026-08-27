@@ -67,6 +67,13 @@ def worker_state_to_dict(worker: WorkerState) -> dict[str, Any]:
         "last_heartbeat": worker.last_heartbeat,
         "allocated_memory_bytes": worker.allocated_memory_bytes,
         "reserved_memory_bytes": worker.reserved_memory_bytes,
+        "gpu_index": worker.gpu_index,
+        "compute_capability": worker.compute_capability,
+        "driver_version": worker.driver_version,
+        "runtime_version": worker.runtime_version,
+        "heartbeat_sequence": worker.heartbeat_sequence,
+        "consecutive_failures": worker.consecutive_failures,
+        "last_error_code": worker.last_error_code,
     }
 
 
@@ -88,6 +95,13 @@ def worker_state_from_dict(payload: dict[str, Any]) -> WorkerState:
         last_heartbeat=float(payload["last_heartbeat"]),
         allocated_memory_bytes=payload["allocated_memory_bytes"],
         reserved_memory_bytes=payload["reserved_memory_bytes"],
+        gpu_index=payload.get("gpu_index"),
+        compute_capability=payload.get("compute_capability"),
+        driver_version=payload.get("driver_version"),
+        runtime_version=payload.get("runtime_version"),
+        heartbeat_sequence=int(payload.get("heartbeat_sequence", 0)),
+        consecutive_failures=int(payload.get("consecutive_failures", 0)),
+        last_error_code=payload.get("last_error_code"),
     )
 
 
@@ -163,6 +177,10 @@ def capacity_to_dict(capacity: RuntimeCapacity) -> dict[str, Any]:
         "available_memory_bytes": capacity.available_memory_bytes,
         "allocated_memory_bytes": capacity.allocated_memory_bytes,
         "reserved_memory_bytes": capacity.reserved_memory_bytes,
+        "device_index": capacity.device_index,
+        "compute_capability": capacity.compute_capability,
+        "driver_version": capacity.driver_version,
+        "runtime_version": capacity.runtime_version,
     }
 
 
@@ -174,6 +192,10 @@ def capacity_from_dict(payload: dict[str, Any]) -> RuntimeCapacity:
         payload["available_memory_bytes"],
         payload["allocated_memory_bytes"],
         payload["reserved_memory_bytes"],
+        payload.get("device_index"),
+        payload.get("compute_capability"),
+        payload.get("driver_version"),
+        payload.get("runtime_version"),
     )
 
 

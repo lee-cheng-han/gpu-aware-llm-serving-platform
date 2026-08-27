@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Sequence
+from math import ceil
 from threading import Lock
 
 from serving_platform.domain import (
@@ -313,4 +314,66 @@ class EstimatedCompletionTimePolicy(PlacementPolicy):
         if not eligible:
             raise NoEligibleWorker(rejected)
         selected = min(eligible, key=lambda worker: (scores[worker.worker_id], worker.worker_id))
+        return self._decision(selected, self.name, eligible, rejected, scores, inputs)
+
+
+class DemandAwarePlacementPolicy(PlacementPolicy):
+    """Prefers warm capacity normally and creates a cold replica under sustained demand."""
+
+    name = "demand_aware_placement"
+
+    def __init__(
+        self,
+        models: ModelRegistry,
+        demand: Callable[[str], int],
+        requests_per_replica: int = 4,
+        cold_load_penalty: float = 5,
+        memory_safety_reserve_bytes: int = 0,
+    ) -> None:
+        super().__init__(models, memory_safety_reserve_bytes)
+        if requests_per_replica <= 0 or cold_load_penalty < 0:
+            raise ValueError("demand placement settings are invalid")
+        self.demand = demand
+        self.requests_per_replica = requests_per_replica
+        self.cold_load_penalty = cold_load_penalty
+
+    def select(
+        self, request: RequestRecord, workers: Sequence[WorkerState]
+    ) -> RoutingDecision:
+        model, eligible, rejected = self._filter(request, workers)
+        if not eligible:
+            raise NoEligibleWorker(rejected)
+        pending_demand = self.demand(model.model_id) + 1
+        resident_replicas = sum(
+            model.model_id in worker.resident_models for worker in eligible
+        )
+        desired_replicas = min(
+            len(eligible),
+            max(1, ceil(pending_demand / self.requests_per_replica)),
+        )
+        scale_out = resident_replicas < desired_replicas
+        scores: dict[str, float] = {}
+        inputs: dict[str, dict[str, float | int | bool | None]] = {}
+        for worker in eligible:
+            resident = model.model_id in worker.resident_models
+            replica_term = 0.0 if resident else (
+                -1.0 if scale_out else self.cold_load_penalty
+            )
+            load = worker.queue_depth + worker.active_batch_count / worker.max_concurrency
+            scores[worker.worker_id] = load + replica_term
+            inputs[worker.worker_id] = {
+                "model_resident": resident,
+                "pending_model_demand": pending_demand,
+                "resident_replicas": resident_replicas,
+                "desired_replicas": desired_replicas,
+                "scale_out_requested": scale_out,
+                "queue_depth": worker.queue_depth,
+                "concurrency_utilization": (
+                    worker.active_batch_count / worker.max_concurrency
+                ),
+                "replica_score_term": replica_term,
+            }
+        selected = min(
+            eligible, key=lambda worker: (scores[worker.worker_id], worker.worker_id)
+        )
         return self._decision(selected, self.name, eligible, rejected, scores, inputs)

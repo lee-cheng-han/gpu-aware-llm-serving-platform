@@ -43,6 +43,7 @@ def test_round_robin_rotates_over_only_eligible_workers():
         worker("b"),
         worker("draining", draining=True),
         worker("missing", resident_models=set()),
+        worker("suspect", health_status=HealthStatus.SUSPECT),
         worker("unhealthy", health_status=HealthStatus.UNHEALTHY),
         worker("saturated", active_batch_count=1, max_concurrency=1),
     ]
@@ -54,6 +55,7 @@ def test_round_robin_rotates_over_only_eligible_workers():
         "draining": "worker_draining",
         "missing": "model_not_resident",
         "saturated": "worker_concurrency_saturated",
+        "suspect": "health:suspect",
         "unhealthy": "health:unhealthy",
     }
 

@@ -1,5 +1,6 @@
 from serving_platform.routing.interfaces import RoutingDecision, RoutingPolicy
 from serving_platform.routing.policies import (
+    DemandAwarePlacementPolicy,
     EstimatedCompletionTimePolicy,
     LeastQueueDepthPolicy,
     MemoryAwareLeastLoadedPolicy,
@@ -9,9 +10,15 @@ from serving_platform.routing.policies import (
     UnknownModel,
     filter_workers,
 )
+from serving_platform.routing.reservations import (
+    AtomicPlacementReservations,
+    PlacementReservation,
+    PlacementReservationSnapshot,
+)
 
 __all__ = [
     "EstimatedCompletionTimePolicy",
+    "DemandAwarePlacementPolicy",
     "LeastQueueDepthPolicy",
     "MemoryAwareLeastLoadedPolicy",
     "ModelResidencyAwarePolicy",
@@ -21,4 +28,7 @@ __all__ = [
     "RoutingPolicy",
     "UnknownModel",
     "filter_workers",
+    "AtomicPlacementReservations",
+    "PlacementReservation",
+    "PlacementReservationSnapshot",
 ]

@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 
 def _env(name: str, default, cast):
@@ -37,6 +38,8 @@ class Settings:
     kv_cache_bytes_per_block: int = 737_280
     kv_cache_high_watermark: float = 0.9
     kv_cache_low_watermark: float = 0.7
+    prefix_cache_max_entries: int = 32
+    prefix_cache_max_tokens: int = 2048
     scheduler_policy: str = "no_batching"
     max_prompt_tokens: int = 1024
     max_prompt_characters: int = 16_384
@@ -53,6 +56,9 @@ class Settings:
     api_keys: str = ""
     cors_allowed_origins: str = ""
     platform_api_enabled: bool = False
+    otel_service_name: str = "llm-inference-scheduler"
+    otel_exporter_otlp_endpoint: str = ""
+    allow_remote_telemetry: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -83,6 +89,8 @@ class Settings:
             kv_cache_bytes_per_block=_env("KV_CACHE_BYTES_PER_BLOCK", 737_280, int),
             kv_cache_high_watermark=_env("KV_CACHE_HIGH_WATERMARK", 0.9, float),
             kv_cache_low_watermark=_env("KV_CACHE_LOW_WATERMARK", 0.7, float),
+            prefix_cache_max_entries=_env("PREFIX_CACHE_MAX_ENTRIES", 32, int),
+            prefix_cache_max_tokens=_env("PREFIX_CACHE_MAX_TOKENS", 2048, int),
             scheduler_policy=_env("SCHEDULER_POLICY", "no_batching", str),
             max_prompt_tokens=_env("MAX_PROMPT_TOKENS", 1024, int),
             max_prompt_characters=_env("MAX_PROMPT_CHARACTERS", 16_384, int),
@@ -99,6 +107,13 @@ class Settings:
             api_keys=_env("API_KEYS", "", str),
             cors_allowed_origins=_env("CORS_ALLOWED_ORIGINS", "", str),
             platform_api_enabled=_bool_env("PLATFORM_API_ENABLED", False),
+            otel_service_name=_env(
+                "OTEL_SERVICE_NAME", "llm-inference-scheduler", str
+            ),
+            otel_exporter_otlp_endpoint=_env(
+                "OTEL_EXPORTER_OTLP_ENDPOINT", "", str
+            ),
+            allow_remote_telemetry=_bool_env("ALLOW_REMOTE_TELEMETRY", False),
         )
 
     def validate(self) -> None:
@@ -145,3 +160,22 @@ class Settings:
             raise ValueError("KV cache watermarks must satisfy 0 < low < high <= 1")
         if self.prefill_chunk_size_tokens < 0:
             raise ValueError("PREFILL_CHUNK_SIZE_TOKENS must be non-negative")
+        if self.prefix_cache_max_entries < 0 or self.prefix_cache_max_tokens < 0:
+            raise ValueError("prefix cache limits must be non-negative")
+        if bool(self.prefix_cache_max_entries) != bool(self.prefix_cache_max_tokens):
+            raise ValueError(
+                "PREFIX_CACHE_MAX_ENTRIES and PREFIX_CACHE_MAX_TOKENS must both be zero or positive"
+            )
+        if not self.otel_service_name.strip():
+            raise ValueError("OTEL_SERVICE_NAME must not be empty")
+        if self.otel_exporter_otlp_endpoint:
+            parsed = urlparse(self.otel_exporter_otlp_endpoint)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                raise ValueError("OTEL_EXPORTER_OTLP_ENDPOINT must be an HTTP(S) URL")
+            if (
+                parsed.hostname.lower() not in {"localhost", "127.0.0.1", "::1"}
+                and not self.allow_remote_telemetry
+            ):
+                raise ValueError(
+                    "remote telemetry requires ALLOW_REMOTE_TELEMETRY=true"
+                )

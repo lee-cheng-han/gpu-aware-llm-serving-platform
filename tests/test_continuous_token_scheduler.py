@@ -6,6 +6,7 @@ import pytest
 
 from inference.backend import BackendBundle, BackendExecutor, BatchTokenResult
 from inference.kv_cache import KVBlockAllocator
+from inference.prefix_cache import PrefixCache
 from inference.token_engine import EngineCapacityError, TokenGenerationEngine
 from inference.token_types import (
     FinishReason,
@@ -28,6 +29,8 @@ class BatchBackend:
         self.decode_entered = Event()
         self.decode_continue = Event()
         self.block_first_decode = False
+        self.prefix_snapshots = 0
+        self.prefix_restores = 0
 
     def load_model(self):
         return None
@@ -71,6 +74,15 @@ class BatchBackend:
 
     def release_sequence(self, sequence_id):
         self.released.append(sequence_id)
+
+    def snapshot_prefix(self, sequence_id):
+        self.prefix_snapshots += 1
+        return self.positions[sequence_id]
+
+    def restore_prefix(self, sequence_id, snapshot, parameters):
+        self.prefix_restores += 1
+        self.positions[sequence_id] = snapshot
+        return GeneratedToken(10, "a", 0, snapshot)
 
     def capacity(self):
         return RuntimeCapacity(DeviceType.CPU, "cpu", None, None)
@@ -238,4 +250,25 @@ async def test_chunked_prefill_advances_prompt_in_bounded_steps():
     ]
     assert [event.token_id for event in result[:-1]] == [10]
     assert result[-1].finish_reason == FinishReason.LENGTH
+    await engine.shutdown()
+
+
+async def test_exact_prefix_hit_bypasses_a_second_prefill():
+    backend = BatchBackend()
+    engine = make_engine(
+        backend,
+        prefix_cache=PrefixCache(max_entries=2, max_tokens=16),
+    )
+    engine.reserve("first", "3", SamplingParameters(1), time.monotonic() + 10, 3)
+    first = await collect(engine, "first")
+    engine.reserve("second", "3", SamplingParameters(1), time.monotonic() + 10, 3)
+    second = await collect(engine, "second")
+
+    assert backend.prefill_batches == [("first",)]
+    assert backend.prefix_snapshots == 1
+    assert backend.prefix_restores == 1
+    assert first[-1].finish_reason == second[-1].finish_reason == FinishReason.LENGTH
+    snapshot = engine.scheduler_snapshot().prefix_cache
+    assert snapshot.hits == 1
+    assert snapshot.misses == 1
     await engine.shutdown()

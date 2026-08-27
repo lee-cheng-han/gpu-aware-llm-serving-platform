@@ -51,6 +51,43 @@ This allocator is real scheduler state, but Hugging Face still owns the physical
 `DynamicCache` tensors. Physical paged tensor storage and a paged-attention kernel are in
 progress and are not claimed as implemented.
 
+## Implemented: bounded exact-prefix reuse
+
+- Immutable post-prefill backend snapshots keyed by exact prompt token IDs
+- Independent restored sequence state with request-specific sampling
+- Entry-count and token-count bounds with deterministic LRU eviction
+- JSON and Prometheus cache hit, miss, occupancy, and eviction metrics
+
+This avoids repeated prefill forward passes for exact prompt matches. It is not radix-tree
+longest-prefix matching or physical page sharing; see [prefix cache](prefix-cache.md).
+
+## Implemented: local observability foundations
+
+- Backward-compatible JSON metrics plus Prometheus text content negotiation
+- W3C trace-context propagation and response correlation headers
+- Structured, secret-safe HTTP request logs
+- Bounded local sustained-load runner with remote-target cost guard
+- Optional OpenTelemetry SDK server spans and OTLP/HTTP batch export with shutdown flushing
+
+No collector or paid telemetry service is required by the default configuration.
+
+## Implemented: worker inventory and staged health
+
+- GPU/runtime inventory, monotonic heartbeat sequences, and reason-coded failures
+- `HEALTHY` to `SUSPECT` to `UNHEALTHY` expiry with recovery from the suspect state
+- Routing exclusion before destructive recovery begins
+- Runtime-agnostic deterministic delay/failure injection and multi-process transport proof
+
+## Implemented: atomic local placement and demand-aware replication
+
+- Selection plus reservation under one lock for concurrent local schedulers
+- Pending queue and cold-model memory reflected in later placement decisions
+- Release on successful enqueue and every failed handoff
+- Demand threshold, desired replica count, and scale-out terms in routing explanations
+
+The reservation boundary is process-local. A shared transactional adapter remains necessary
+before multiple independent control-plane replicas can place concurrently.
+
 ## In progress: CUDA validation
 
 - Run the gated proof on an identified CUDA device
@@ -64,14 +101,11 @@ owned or free GPU hardware.
 ## Planned in dependency order
 
 1. Physical paged KV tensors, arbitrary-length decode batches, and paged attention
-2. Prometheus metrics, OpenTelemetry tracing, structured logs, and sustained-load benchmarks
-3. Prefix-cache sharing, bounded eviction, and measured TTFT comparison
-4. Rich worker/GPU inventory, suspect health state, fault injection, and multi-process demo
-5. Atomic GPU placement reservations, replication decisions, and demand-aware placement
-6. Multi-GPU execution with `torch.distributed`/NCCL and correctness comparisons
-7. Topology discovery and topology-aware worker-group placement
-8. Profile-guided Triton kernel and CUDA Graph experiments with eager fallbacks
-9. Sustained load, memory-leak, crash, overload, and production-qualification evidence
+2. Radix-tree partial-prefix sharing and measured TTFT comparison
+3. Multi-GPU execution with `torch.distributed`/NCCL and correctness comparisons
+4. Topology discovery and topology-aware worker-group placement
+5. Profile-guided Triton kernel and CUDA Graph experiments with eager fallbacks
+6. Sustained memory-leak, crash, overload, and production-qualification evidence
 
 No planned item is represented as an existing capability in public documentation. GPU and
 multi-GPU performance numbers will appear only after recorded runs on identified hardware.

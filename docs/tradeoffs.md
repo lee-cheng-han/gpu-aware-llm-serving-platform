@@ -87,8 +87,8 @@ local packaging, not elasticity or high availability.
 
 ## What would change in a production version
 
-A production system still needs distributed admission transactions, durable queue claims,
-leader coordination, secret-manager-backed key rotation, distributed telemetry, structured
-logging, cancellation-aware generation, and GPU-native continuous batching. Prometheus,
-Grafana, tracing, autoscaling, and careful overload behavior would follow measured
-requirements.
+A production system still needs durable queue claims, shared placement transactions,
+leader coordination, secret-manager-backed key rotation, a deployed telemetry collector,
+and GPU-native continuous batching. Prometheus exposition, structured logs, optional OTLP
+tracing, staged worker health, and deterministic fault injection exist locally; Grafana,
+autoscaling, and careful overload policy still depend on measured requirements.

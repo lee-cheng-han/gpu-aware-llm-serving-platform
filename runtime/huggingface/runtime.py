@@ -84,6 +84,12 @@ class HuggingFaceRuntime:
         name = torch.cuda.get_device_name(self.cuda_device_index)
         allocated_bytes = torch.cuda.memory_allocated(self.cuda_device_index)
         reserved_bytes = torch.cuda.memory_reserved(self.cuda_device_index)
+        properties_method = getattr(torch.cuda, "get_device_properties", None)
+        properties = (
+            properties_method(self.cuda_device_index)
+            if properties_method is not None
+            else None
+        )
         return RuntimeCapacity(
             DeviceType.CUDA,
             name,
@@ -91,4 +97,8 @@ class HuggingFaceRuntime:
             free_bytes,
             allocated_bytes,
             reserved_bytes,
+            self.cuda_device_index,
+            f"{properties.major}.{properties.minor}" if properties is not None else None,
+            str(torch.cuda.driver_version()) if hasattr(torch.cuda, "driver_version") else None,
+            str(torch.version.cuda) if hasattr(torch, "version") else None,
         )

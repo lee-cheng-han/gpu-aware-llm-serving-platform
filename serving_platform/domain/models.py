@@ -14,6 +14,7 @@ class DeviceType(StrEnum):
 class HealthStatus(StrEnum):
     REGISTERING = "registering"
     HEALTHY = "healthy"
+    SUSPECT = "suspect"
     UNHEALTHY = "unhealthy"
     RECOVERING = "recovering"
     STOPPED = "stopped"
@@ -165,6 +166,13 @@ class WorkerState:
     last_heartbeat: float = field(default_factory=time.monotonic)
     allocated_memory_bytes: int | None = None
     reserved_memory_bytes: int | None = None
+    gpu_index: int | None = None
+    compute_capability: str | None = None
+    driver_version: str | None = None
+    runtime_version: str | None = None
+    heartbeat_sequence: int = 0
+    consecutive_failures: int = 0
+    last_error_code: str | None = None
 
     def __post_init__(self) -> None:
         if not self.worker_id:
@@ -184,6 +192,10 @@ class WorkerState:
                     raise ValueError("worker CUDA memory accounting is invalid")
         if min(self.queue_depth, self.active_batch_count) < 0 or self.max_concurrency <= 0:
             raise ValueError("worker queue and concurrency values are invalid")
+        if self.heartbeat_sequence < 0 or self.consecutive_failures < 0:
+            raise ValueError("worker health counters must be non-negative")
+        if self.gpu_index is not None and self.gpu_index < 0:
+            raise ValueError("GPU index must be non-negative")
 
 
 @dataclass

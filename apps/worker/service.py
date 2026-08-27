@@ -124,6 +124,10 @@ class ManagedWorker:
             last_heartbeat=self._clock(),
             allocated_memory_bytes=capacity.allocated_memory_bytes,
             reserved_memory_bytes=capacity.reserved_memory_bytes,
+            gpu_index=capacity.device_index,
+            compute_capability=capacity.compute_capability,
+            driver_version=capacity.driver_version,
+            runtime_version=capacity.runtime_version,
         )
 
     def register(self) -> WorkerState:

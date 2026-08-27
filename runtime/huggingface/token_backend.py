@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from importlib import import_module
 from typing import Any
@@ -18,6 +19,15 @@ class _SequenceCache:
     attention_mask: Any
     cache_position: Any
     last_token_id: int
+    next_token_logits: Any = None
+
+
+@dataclass(frozen=True)
+class _PrefixSnapshot:
+    cache: Any
+    attention_mask: Any
+    cache_position: Any
+    next_token_logits: Any
 
 
 class HuggingFaceTokenBackend:
@@ -100,6 +110,50 @@ class HuggingFaceTokenBackend:
         get_length = getattr(cache, "get_seq_length", None)
         return int(get_length()) if get_length is not None else 0
 
+    def snapshot_prefix(self, sequence_id: str) -> _PrefixSnapshot:
+        """Copy immutable post-prefill state before decode mutates the sequence cache."""
+        try:
+            sequence = self._sequences[sequence_id]
+        except KeyError as exc:
+            raise KeyError(f"sequence does not exist: {sequence_id}") from exc
+        logits = getattr(sequence, "next_token_logits", None)
+        if logits is None:
+            raise RuntimeError("sequence has no reusable prefill logits")
+        return _PrefixSnapshot(
+            copy.deepcopy(sequence.cache),
+            sequence.attention_mask.clone(),
+            sequence.cache_position.clone(),
+            logits.clone(),
+        )
+
+    def restore_prefix(
+        self,
+        sequence_id: str,
+        snapshot: object,
+        parameters: SamplingParameters,
+    ) -> GeneratedToken:
+        """Create an independent sequence from a cached, immutable prefill snapshot."""
+        self._require_active()
+        if sequence_id in self._sequences:
+            raise ValueError(f"sequence already exists: {sequence_id}")
+        if not isinstance(snapshot, _PrefixSnapshot):
+            raise TypeError("prefix snapshot was not created by this backend")
+        token_id = self._token(snapshot.next_token_logits, parameters, 0)
+        cache = copy.deepcopy(snapshot.cache)
+        self._sequences[sequence_id] = _SequenceCache(
+            cache=cache,
+            attention_mask=snapshot.attention_mask.clone(),
+            cache_position=snapshot.cache_position.clone(),
+            last_token_id=token_id,
+            next_token_logits=snapshot.next_token_logits.clone(),
+        )
+        return GeneratedToken(
+            token_id,
+            self._decode_text(token_id),
+            0,
+            self._cache_length(cache),
+        )
+
     def prefill(
         self,
         sequence_id: str,
@@ -139,6 +193,7 @@ class HuggingFaceTokenBackend:
                 attention_mask=attention_mask,
                 cache_position=cache_position[-1:] + 1,
                 last_token_id=token_id,
+                next_token_logits=outputs.logits[:, -1, :].clone(),
             )
             return GeneratedToken(
                 token_id,
@@ -204,6 +259,7 @@ class HuggingFaceTokenBackend:
                     attention_mask=attention_mask[row : row + 1],
                     cache_position=cache_position[-1:] + 1,
                     last_token_id=token_id,
+                    next_token_logits=outputs.logits[row : row + 1, -1, :].clone(),
                 )
                 result[sequence_id] = GeneratedToken(
                     token_id,
@@ -262,6 +318,9 @@ class HuggingFaceTokenBackend:
                 attention_mask=attention_mask,
                 cache_position=cache_position[-1:] + 1,
                 last_token_id=-1,
+                next_token_logits=(
+                    outputs.logits[:, -1, :].clone() if final else None
+                ),
             )
             self._sequences[sequence_id] = sequence
             if not final:
@@ -313,6 +372,7 @@ class HuggingFaceTokenBackend:
             )
             sequence.cache = outputs.past_key_values
             sequence.cache_position = sequence.cache_position + 1
+            sequence.next_token_logits = None
             token_id = self._token(outputs.logits[:, -1, :], parameters, index)
             sequence.last_token_id = token_id
             return GeneratedToken(
@@ -386,6 +446,7 @@ class HuggingFaceTokenBackend:
                 sequence.attention_mask = attention_mask[row : row + 1]
                 sequence.cache_position = sequence.cache_position + 1
                 sequence.last_token_id = token_id
+                sequence.next_token_logits = None
                 result[sequence_id] = GeneratedToken(
                     token_id,
                     self._decode_text(token_id),
@@ -406,6 +467,8 @@ class HuggingFaceTokenBackend:
         torch = import_module("torch")
         index = int(self.worker.device.partition(":")[2] or 0)
         free_bytes, total_bytes = torch.cuda.mem_get_info(index)
+        properties_method = getattr(torch.cuda, "get_device_properties", None)
+        properties = properties_method(index) if properties_method is not None else None
         return RuntimeCapacity(
             DeviceType.CUDA,
             torch.cuda.get_device_name(index),
@@ -413,6 +476,10 @@ class HuggingFaceTokenBackend:
             int(free_bytes),
             int(torch.cuda.memory_allocated(index)),
             int(torch.cuda.memory_reserved(index)),
+            index,
+            f"{properties.major}.{properties.minor}" if properties is not None else None,
+            str(torch.cuda.driver_version()) if hasattr(torch.cuda, "driver_version") else None,
+            str(torch.version.cuda) if hasattr(torch, "version") else None,
         )
 
     def shutdown(self) -> None:

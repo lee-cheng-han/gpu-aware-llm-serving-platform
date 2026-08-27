@@ -38,9 +38,11 @@ async def test_opt_in_platform_api_executes_every_control_plane_layer():
                 f"/v1/requests/{request_id}",
                 headers={"Authorization": "Bearer key-b"},
             )
+            metrics = await client.get("/metrics")
 
     assert response.status_code == 200
-    assert response.json()["scheduler_policy"] == "model_residency_aware"
+    assert response.json()["scheduler_policy"] == "demand_aware_placement"
+    assert metrics.json()["placement_reservations"]["active"] == 0
     assert response.json()["status"] == "COMPLETED"
     assert response.json()["batch_size"] == 1
     assert response.json()["text"].startswith("[simulated:")

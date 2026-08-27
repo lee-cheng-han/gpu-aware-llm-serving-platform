@@ -11,7 +11,7 @@ Client
   v
 FastAPI gateway (`apps.gateway`)
   |
-  +--> validation and bounded HTTP concurrency
+  +--> validation, trace correlation, metrics, and bounded HTTP concurrency
   +--> continuous SSE token scheduler -------------+
   |                                                |
   v                                                v
@@ -32,7 +32,8 @@ calls.
 
 This remains a modular monolith. The non-streaming compatibility route retains the proven
 static scheduler; streaming uses continuous iteration scheduling, batched prefill/decode,
-logical KV block admission, and non-paged Hugging Face `DynamicCache` tensors. Device calls
+exact-prefix snapshot reuse, logical KV block admission, and non-paged Hugging Face
+`DynamicCache` tensors. Device calls
 use one dedicated executor thread and never hold
 application locks across awaits. When `PLATFORM_API_ENABLED=true`, `/v1/platform/generate` executes the
 complete gateway-to-control-plane path through deterministic in-process simulated workers.
@@ -100,10 +101,11 @@ loop.
 
 The default application uses process-local state. A Redis-compatible adapter can durably
 store request metadata, lifecycle transitions, assignment, attempts, and retry reasons
-without persisting prompts or outputs. Workers register and publish health, queue,
-active-batch, residency, throughput, drain, and capacity snapshots. A reliability
-supervisor expires stale heartbeats and invokes recovery; recovery requires worker
-re-registration. CUDA capacity uses
+without persisting prompts or outputs. Workers register and publish staged health,
+heartbeat sequence/failure reasons, queue, active-batch, residency, throughput, drain,
+device/runtime inventory, and capacity snapshots. A reliability supervisor marks delayed
+workers suspect, expires stale heartbeats, and invokes recovery only after full expiry;
+recovery requires worker re-registration. CUDA capacity uses
 PyTorch device APIs when CUDA is available; the deterministic simulated runtime models
 memory, load delay, throughput, batching efficiency, and controlled failures without
 claiming real inference. Round-robin and least-queue global policies now filter worker
@@ -113,6 +115,11 @@ Placement policies additionally use registered model memory and context requirem
 PyTorch-reported CUDA free/allocated/reserved memory, a configurable safety reserve,
 residency, throughput, and deadline feasibility. Simulated memory values remain explicitly
 synthetic.
+
+The local global scheduler selects and reserves under one lock. Pending handoffs contribute
+queue depth and cold-model memory to later decisions until enqueue succeeds or fails. A
+demand-aware policy can request a new replica once pending model demand crosses a configured
+threshold. This reservation boundary is local, not a distributed transaction.
 
 Cold assignments flow through the in-memory model catalog into the selected worker's model
 cache. The worker reserves estimated memory before releasing its state lock, coalesces

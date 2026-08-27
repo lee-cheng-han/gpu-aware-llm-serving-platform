@@ -20,25 +20,28 @@ prefill and autoregressive decode against framework-managed KV caches.
   real-model prefill/decode batches
 - Fixed-block KV capacity reservation, ownership tables, reference counts, watermarks, and
   exhaustion handling
+- Bounded exact-prompt KV snapshot reuse with LRU eviction and real prefill bypass
 - Prefill-first, decode-first, balanced, and optional real chunked-prefill execution
 - Model-aware context-window validation and optional startup warm-up
 - No-batching and dynamic micro-batching schedulers
 - Queue, concurrency, prompt, output, and deadline limits
 - Cancellation-aware request futures and graceful queue shutdown
 - Cancellation-aware interleaved SSE streaming with token IDs, indices, finish reason,
-  usage, and JSON metrics
+  usage, JSON/Prometheus metrics, W3C trace correlation, and structured request logs
 - Repeatable benchmark clients, Docker, and one-pod kind manifests
 - Typed CPU/CUDA worker abstractions, deterministic simulated GPU execution, and an
-  in-memory heartbeat-aware worker registry
+  in-memory worker registry with rich inventory and staged suspect/unhealthy health
 - Round-robin and least-queue global routing with structured decision explanations
 - Supervised worker heartbeats and token-bounded local worker execution
 - Residency-aware, memory-safe, and estimated-completion placement policies
+- Atomic local placement reservations and demand-aware replica decisions
 - Coalesced model loading, warmup, memory reservations, and protected LRU idle eviction
 - API-key tenant identity, atomic quotas, weighted fairness, priority aging, and cancellation
 - Supervised stale-worker recovery with bounded, reason-coded retries for unstarted work
 - Redis-compatible, prompt-redacting request metadata persistence and tenant-scoped status APIs
 - Authenticated local HTTP worker transport with strict JSON contracts and two-process tests
 - Redis-compatible atomic admission accounting and owner-leased recovery coordination
+- Deterministic runtime fault injection and optional OpenTelemetry OTLP/HTTP export
 
 ## What This Project Is Not
 
@@ -91,6 +94,7 @@ Configuration is read from the environment:
 | `KV_CACHE_TOTAL_BLOCKS` / `KV_CACHE_BLOCK_SIZE_TOKENS` | `1024` / `16` |
 | `KV_CACHE_BYTES_PER_BLOCK` | `737280` (reference-model float32 estimate) |
 | `KV_CACHE_HIGH_WATERMARK` / `KV_CACHE_LOW_WATERMARK` | `0.9` / `0.7` |
+| `PREFIX_CACHE_MAX_ENTRIES` / `PREFIX_CACHE_MAX_TOKENS` | `32` / `2048` (`0` / `0` disables) |
 | `SCHEDULER_POLICY` | `no_batching` |
 | `MAX_PROMPT_TOKENS` / `MAX_NEW_TOKENS` | `1024` / `128` |
 | `MAX_PROMPT_CHARACTERS` | `16384` |
@@ -104,6 +108,16 @@ Configuration is read from the environment:
 | `API_KEYS` | empty (authentication disabled) |
 | `CORS_ALLOWED_ORIGINS` | empty (cross-origin access disabled) |
 | `PLATFORM_API_ENABLED` | `false` (opt-in deterministic control-plane API) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | empty (export disabled) |
+| `OTEL_SERVICE_NAME` | `llm-inference-scheduler` |
+| `ALLOW_REMOTE_TELEMETRY` | `false` |
+
+Optional local OTLP export uses a separate free dependency profile:
+
+```bash
+make install-observability
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318/v1/traces make run
+```
 
 ## API Usage
 
@@ -120,6 +134,7 @@ curl -N -X POST http://localhost:8000/v1/generate_stream \
   -d '{"prompt":"Explain PCIe simply.","max_new_tokens":32,"temperature":0.7,"top_p":0.9}'
 
 curl http://localhost:8000/metrics
+curl -H 'accept: text/plain' http://localhost:8000/metrics
 
 # Use the request_id returned by a generation call.
 curl http://localhost:8000/v1/requests/<request_id>
@@ -236,6 +251,10 @@ sample limit are also exposed. Timing samples use bounded deques, so metrics mem
 not grow without limit. Token scheduler metrics add waiting/running counts, iteration and
 batch counts, selected policy, maximum observed batch size, KV blocks/bytes/utilization,
 allocation failures, and pressure state. Metrics reset on restart.
+Exact-prefix metrics add retained entries/tokens, hits, misses, hit rate, insertions,
+evictions, and bypasses. Prometheus text is selected with `Accept: text/plain`; JSON remains
+the default for compatibility. HTTP responses propagate W3C trace IDs and structured logs
+exclude prompts, generated text, and credentials. See [observability](docs/observability.md).
 
 ## Benchmark Methodology
 
@@ -273,6 +292,15 @@ python benchmark/compare_schedulers.py --policy dynamic_batch \
 ```
 
 See [the full methodology](docs/benchmark_methodology.md).
+
+Run a bounded measured load against the local gateway with:
+
+```bash
+make benchmark-sustained-load
+```
+
+The load client refuses remote targets without explicit opt-in, reducing the chance of
+accidentally exercising a billed endpoint.
 
 The deterministic control-plane evaluation exercises heterogeneous tenants, priorities,
 model residency, worker speeds, deadlines, and weighted fairness without loading a model:
@@ -318,9 +346,9 @@ streaming, CPU-only, and single-worker semantics.
 
 ## Future Work
 
-The remaining production work includes Prometheus/OpenTelemetry export, idempotency keys,
-atomic placement reservations, real GPU evaluation, physical paged KV tensors/PagedAttention,
-arbitrary-length decode batching, prefix caching, and multi-GPU execution.
+The remaining production work includes shared cross-controller placement transactions,
+real GPU evaluation, physical paged KV tensors/PagedAttention, arbitrary-length decode
+batching, partial-prefix page sharing, and multi-GPU execution.
 
 ## Development Checks
 

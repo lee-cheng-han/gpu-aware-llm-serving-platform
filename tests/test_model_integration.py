@@ -77,6 +77,36 @@ def test_smollm_manual_prefill_decode_matches_greedy_generate():
         executor.shutdown()
 
 
+def test_smollm_prefix_snapshot_restores_identical_greedy_state():
+    worker = InferenceWorker(
+        "HuggingFaceTB/SmolLM2-135M-Instruct",
+        "12fd25f77366fa6b3b4b768ec3050bf629380bac",
+        "cpu",
+        "float32",
+    )
+    backend = HuggingFaceTokenBackend(worker)
+    executor = BackendExecutor("model-prefix-integration")
+    parameters = SamplingParameters(2, temperature=0)
+    try:
+        prompt = executor.run(backend.tokenize, "Explain prefix caching briefly.")
+        original = executor.run(backend.prefill, "original", prompt, parameters)
+        snapshot = executor.run(backend.snapshot_prefix, "original")
+        restored = executor.run(
+            backend.restore_prefix, "restored", snapshot, parameters
+        )
+        assert restored.token_id == original.token_id
+        assert restored.cache_tokens == original.cache_tokens == len(prompt.token_ids)
+        original_next = executor.run(backend.decode, "original", parameters, 1)
+        restored_next = executor.run(backend.decode, "restored", parameters, 1)
+        assert restored_next.token_id == original_next.token_id
+        assert restored_next.cache_tokens == original_next.cache_tokens
+    finally:
+        executor.run(backend.release_sequence, "original")
+        executor.run(backend.release_sequence, "restored")
+        executor.run(backend.shutdown)
+        executor.shutdown()
+
+
 def test_smollm_real_batched_decode_and_chunked_prefill_match_reference():
     model_id = "HuggingFaceTB/SmolLM2-135M-Instruct"
     revision = "12fd25f77366fa6b3b4b768ec3050bf629380bac"

@@ -30,7 +30,15 @@
   tensor parallelism yet.
 - An active PyTorch forward pass cannot be interrupted immediately. Cancellation prevents
   subsequent decode and emission, then waits for the active operation before cache cleanup.
-- Metrics, queues, and request outcomes are process-local.
+- Metrics, queues, prefix snapshots, placement reservations, and request outcomes are
+  process-local. Prometheus text, trace correlation, structured logs, and optional
+  OpenTelemetry OTLP/HTTP export are implemented, but no collector is bundled.
+- Worker health has a staged suspect state and rich inventory, while registry persistence
+  and placement-reservation transactions remain process-local. Independent control-plane
+  replicas therefore cannot yet share those decisions atomically.
+- Prefix caching bypasses real prefill work for exact tokenized-prompt matches and is bounded
+  by LRU entry/token limits. It clones `DynamicCache` state rather than sharing physical
+  pages and does not yet match partial prefixes.
 - Deployment is single-host and single-replica.
 - No GPU benchmark result should be inferred from CPU measurements.
 - Simulated throughput is a deterministic workload model, not measured hardware performance.
