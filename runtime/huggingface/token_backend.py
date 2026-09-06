@@ -139,20 +139,50 @@ class HuggingFaceTokenBackend:
         if not isinstance(snapshot, _PrefixSnapshot):
             raise TypeError("prefix snapshot was not created by this backend")
         token_id = self._token(snapshot.next_token_logits, parameters, 0)
-        cache = copy.deepcopy(snapshot.cache)
-        self._sequences[sequence_id] = _SequenceCache(
-            cache=cache,
-            attention_mask=snapshot.attention_mask.clone(),
-            cache_position=snapshot.cache_position.clone(),
-            last_token_id=token_id,
-            next_token_logits=snapshot.next_token_logits.clone(),
-        )
+        cache = self._restore_prefix_cache(sequence_id, snapshot, token_id)
         return GeneratedToken(
             token_id,
             self._decode_text(token_id),
             0,
             self._cache_length(cache),
         )
+
+    def resume_prefix(
+        self,
+        sequence_id: str,
+        snapshot: object,
+        suffix: TokenizedPrompt,
+        parameters: SamplingParameters,
+    ) -> GeneratedToken:
+        """Restore a cached prefix and prefill only the unmatched prompt suffix."""
+        self._require_active()
+        if sequence_id in self._sequences:
+            raise ValueError(f"sequence already exists: {sequence_id}")
+        if not isinstance(snapshot, _PrefixSnapshot):
+            raise TypeError("prefix snapshot was not created by this backend")
+        if not suffix.token_ids:
+            return self.restore_prefix(sequence_id, snapshot, parameters)
+        self._restore_prefix_cache(sequence_id, snapshot, -1)
+        token = self.prefill_chunk(sequence_id, suffix, parameters, True)
+        if token is None:
+            raise RuntimeError("suffix prefill did not produce a token")
+        return token
+
+    def _restore_prefix_cache(
+        self,
+        sequence_id: str,
+        snapshot: _PrefixSnapshot,
+        last_token_id: int,
+    ) -> Any:
+        cache = copy.deepcopy(snapshot.cache)
+        self._sequences[sequence_id] = _SequenceCache(
+            cache=cache,
+            attention_mask=snapshot.attention_mask.clone(),
+            cache_position=snapshot.cache_position.clone(),
+            last_token_id=last_token_id,
+            next_token_logits=snapshot.next_token_logits.clone(),
+        )
+        return cache
 
     def prefill(
         self,
@@ -480,6 +510,9 @@ class HuggingFaceTokenBackend:
             f"{properties.major}.{properties.minor}" if properties is not None else None,
             str(torch.cuda.driver_version()) if hasattr(torch.cuda, "driver_version") else None,
             str(torch.version.cuda) if hasattr(torch, "version") else None,
+            None,
+            getattr(properties, "pci_bus_id", None) if properties is not None else None,
+            None,
         )
 
     def shutdown(self) -> None:

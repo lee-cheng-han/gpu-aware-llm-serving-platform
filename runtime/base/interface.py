@@ -17,6 +17,9 @@ class RuntimeCapacity:
     compute_capability: str | None = None
     driver_version: str | None = None
     runtime_version: str | None = None
+    numa_node: int | None = None
+    pcie_root_id: str | None = None
+    fabric_id: str | None = None
 
 
 @dataclass(frozen=True)

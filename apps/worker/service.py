@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import socket
 import time
 from collections import Counter, deque
 from collections.abc import Callable
@@ -128,6 +129,10 @@ class ManagedWorker:
             compute_capability=capacity.compute_capability,
             driver_version=capacity.driver_version,
             runtime_version=capacity.runtime_version,
+            node_id=socket.gethostname(),
+            numa_node=capacity.numa_node,
+            pcie_root_id=capacity.pcie_root_id,
+            fabric_id=capacity.fabric_id,
         )
 
     def register(self) -> WorkerState:

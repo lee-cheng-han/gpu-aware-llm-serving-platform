@@ -32,11 +32,12 @@ watermark hysteresis, shared references, and 500 seeded randomized allocator tra
 These are correctness results, not a throughput improvement claim. A new measured
 multi-concurrency benchmark is still required before claiming performance gains.
 
-The exact-prefix cache has download-free lifecycle, hit/miss, eviction, and prefill-bypass
-coverage. A pinned-model parity test now checks restored greedy state, but it has not yet
-been run in the current environment, and no prefix-cache TTFT improvement is claimed. The
-local sustained-load client can produce measured HTTP latency and throughput reports while
-refusing remote targets without explicit opt-in.
+The radix prefix cache has download-free lifecycle, longest-prefix, exact/partial hit,
+eviction, exact-prefill-bypass, and suffix-only-prefill coverage. Pinned-model parity tests
+check exact restored state and partial-prefix output against full greedy prefill, but the new
+partial-prefix test has not yet been run in the current environment. No prefix-cache TTFT
+improvement is claimed. The local sustained-load client can produce measured HTTP latency
+and throughput reports while refusing remote targets without explicit opt-in.
 
 The download-free control-plane suite also covers staged suspect/unhealthy transitions,
 heartbeat recovery, rich inventory serialization, deterministic injected runtime failures,
@@ -44,6 +45,11 @@ concurrent queue and cold-memory reservations, failed-handoff rollback, and dema
 replica selection. The optional observability integration test successfully exported a
 non-empty protobuf trace payload to a temporary localhost OTLP/HTTP collector; no hosted
 collector was contacted.
+
+The bounded qualification command performs seeded KV allocator churn, prefix-cache bound
+checks, overload/release validation, and deterministic failure/recovery checks. Its heap gate
+measures Python allocations only. Results from this command are local correctness evidence,
+not GPU performance or production certification.
 
 The versioned deterministic baseline is available at
 [`benchmark/results/simulated/heterogeneous/report.md`](../benchmark/results/simulated/heterogeneous/report.md).

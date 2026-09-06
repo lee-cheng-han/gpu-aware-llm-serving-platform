@@ -31,6 +31,7 @@ class BatchBackend:
         self.block_first_decode = False
         self.prefix_snapshots = 0
         self.prefix_restores = 0
+        self.prefix_resumes = []
 
     def load_model(self):
         return None
@@ -83,6 +84,11 @@ class BatchBackend:
         self.prefix_restores += 1
         self.positions[sequence_id] = snapshot
         return GeneratedToken(10, "a", 0, snapshot)
+
+    def resume_prefix(self, sequence_id, snapshot, suffix, parameters):
+        self.prefix_resumes.append((sequence_id, snapshot, suffix.token_ids))
+        self.positions[sequence_id] = snapshot + len(suffix.token_ids)
+        return GeneratedToken(10, "a", 0, self.positions[sequence_id])
 
     def capacity(self):
         return RuntimeCapacity(DeviceType.CPU, "cpu", None, None)
@@ -271,4 +277,24 @@ async def test_exact_prefix_hit_bypasses_a_second_prefill():
     snapshot = engine.scheduler_snapshot().prefix_cache
     assert snapshot.hits == 1
     assert snapshot.misses == 1
+    await engine.shutdown()
+
+
+async def test_longer_prompt_restores_cached_prefix_and_prefills_only_suffix():
+    backend = BatchBackend()
+    engine = make_engine(
+        backend,
+        prefix_cache=PrefixCache(max_entries=4, max_tokens=32),
+    )
+    engine.reserve("prefix", "3", SamplingParameters(1), time.monotonic() + 10, 3)
+    await collect(engine, "prefix")
+    engine.reserve("longer", "5", SamplingParameters(1), time.monotonic() + 10, 5)
+    result = await collect(engine, "longer")
+
+    assert backend.prefill_batches == [("prefix",)]
+    assert backend.prefix_resumes == [("longer", 3, (4, 5))]
+    assert result[-1].finish_reason == FinishReason.LENGTH
+    snapshot = engine.scheduler_snapshot().prefix_cache
+    assert snapshot.partial_hits == 1
+    assert snapshot.matched_tokens == 3
     await engine.shutdown()

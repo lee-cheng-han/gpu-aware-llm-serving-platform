@@ -592,6 +592,9 @@ async def metrics(request: Request):
                 "insertions": prefix_cache.insertions,
                 "evictions": prefix_cache.evictions,
                 "bypasses": prefix_cache.bypasses,
+                "exact_hits": prefix_cache.exact_hits,
+                "partial_hits": prefix_cache.partial_hits,
+                "matched_tokens": prefix_cache.matched_tokens,
             }
     pipeline = state.platform_pipeline
     reservations = (

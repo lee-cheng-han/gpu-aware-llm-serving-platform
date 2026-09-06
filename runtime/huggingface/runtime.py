@@ -101,4 +101,7 @@ class HuggingFaceRuntime:
             f"{properties.major}.{properties.minor}" if properties is not None else None,
             str(torch.cuda.driver_version()) if hasattr(torch.cuda, "driver_version") else None,
             str(torch.version.cuda) if hasattr(torch, "version") else None,
+            None,
+            getattr(properties, "pci_bus_id", None) if properties is not None else None,
+            None,
         )

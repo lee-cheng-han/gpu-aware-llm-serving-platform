@@ -30,6 +30,23 @@ def test_lru_eviction_respects_entry_and_token_bounds():
     assert snapshot.evictions == 1
 
 
+def test_radix_lookup_returns_the_longest_cached_token_prefix():
+    cache = PrefixCache(max_entries=4, max_tokens=32)
+    cache.put((1, 2), "short")
+    cache.put((1, 2, 3, 4), "long")
+
+    match = cache.longest_prefix((1, 2, 3, 4, 5, 6))
+
+    assert match is not None
+    assert match.backend_state == "long"
+    assert match.token_ids == (1, 2, 3, 4)
+    assert match.matched_tokens == 4
+    assert not match.exact
+    snapshot = cache.snapshot()
+    assert snapshot.partial_hits == 1
+    assert snapshot.matched_tokens == 4
+
+
 def test_disabled_and_oversized_entries_are_bypassed():
     disabled = PrefixCache()
     assert not disabled.put((1,), object())

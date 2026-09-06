@@ -20,7 +20,7 @@ prefill and autoregressive decode against framework-managed KV caches.
   real-model prefill/decode batches
 - Fixed-block KV capacity reservation, ownership tables, reference counts, watermarks, and
   exhaustion handling
-- Bounded exact-prompt KV snapshot reuse with LRU eviction and real prefill bypass
+- Bounded radix KV snapshot lookup with LRU eviction, exact bypass, and suffix-only prefill
 - Prefill-first, decode-first, balanced, and optional real chunked-prefill execution
 - Model-aware context-window validation and optional startup warm-up
 - No-batching and dynamic micro-batching schedulers
@@ -35,6 +35,7 @@ prefill and autoregressive decode against framework-managed KV caches.
 - Supervised worker heartbeats and token-bounded local worker execution
 - Residency-aware, memory-safe, and estimated-completion placement policies
 - Atomic local placement reservations and demand-aware replica decisions
+- Conservative topology discovery and topology-aware multi-worker group selection
 - Coalesced model loading, warmup, memory reservations, and protected LRU idle eviction
 - API-key tenant identity, atomic quotas, weighted fairness, priority aging, and cancellation
 - Supervised stale-worker recovery with bounded, reason-coded retries for unstarted work
@@ -42,6 +43,7 @@ prefill and autoregressive decode against framework-managed KV caches.
 - Authenticated local HTTP worker transport with strict JSON contracts and two-process tests
 - Redis-compatible atomic admission accounting and owner-leased recovery coordination
 - Deterministic runtime fault injection and optional OpenTelemetry OTLP/HTTP export
+- Bounded local qualification drills for allocator churn, overload, recovery, and heap growth
 
 ## What This Project Is Not
 
@@ -68,6 +70,8 @@ All device work runs off the event loop through one dedicated executor lane and 
 compatibility worker's execution lock. See the [current architecture](docs/current-architecture.md),
 [target architecture](docs/target-architecture.md), and
 [backend ADR](docs/adr/001-huggingface-prefill-decode.md).
+Topology grouping and the local evidence gates are detailed in
+[topology-aware placement](docs/topology.md) and [qualification](docs/qualification.md).
 
 ## Quick Start
 
@@ -251,8 +255,9 @@ sample limit are also exposed. Timing samples use bounded deques, so metrics mem
 not grow without limit. Token scheduler metrics add waiting/running counts, iteration and
 batch counts, selected policy, maximum observed batch size, KV blocks/bytes/utilization,
 allocation failures, and pressure state. Metrics reset on restart.
-Exact-prefix metrics add retained entries/tokens, hits, misses, hit rate, insertions,
-evictions, and bypasses. Prometheus text is selected with `Accept: text/plain`; JSON remains
+Prefix metrics add retained entries/tokens, exact and partial hits, matched tokens, misses,
+hit rate, insertions, evictions, and bypasses. Prometheus text is selected with
+`Accept: text/plain`; JSON remains
 the default for compatibility. HTTP responses propagate W3C trace IDs and structured logs
 exclude prompts, generated text, and credentials. See [observability](docs/observability.md).
 
@@ -348,7 +353,8 @@ streaming, CPU-only, and single-worker semantics.
 
 The remaining production work includes shared cross-controller placement transactions,
 real GPU evaluation, physical paged KV tensors/PagedAttention, arbitrary-length decode
-batching, partial-prefix page sharing, and multi-GPU execution.
+batching, physical prefix-page sharing, multi-GPU/NCCL execution, and profile-guided
+Triton/CUDA Graph experiments.
 
 ## Development Checks
 
@@ -358,6 +364,7 @@ make lint
 make typecheck
 make test
 make evaluation
+make qualification
 ```
 
 Normal tests never download a model. The explicit optional model suite includes the pinned

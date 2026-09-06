@@ -7,8 +7,8 @@ baseline passed Ruff, mypy across 48 source files, 129 non-model tests, and the 
 scheduling evaluation. Phase 1 retains those components and adds the token engine described
 below; model tests remain opt-in because they download weights.
 
-The latest download-free local check passes Ruff, mypy across its 51 configured source
-files, 185 tests with one environment-dependent skip, compilation, and both deterministic
+The latest completed download-free baseline passes Ruff, mypy across its configured source
+files, 191 tests with one environment-dependent skip, compilation, and both deterministic
 evaluation gates. A separate optional integration test exported a real protobuf span to a
 temporary local OTLP/HTTP collector. Five pinned/compatibility model tests were recorded in the earlier CPU
 proof; the newly added prefix-restore model test remains opt-in and has not been recorded on
@@ -46,7 +46,9 @@ cancellation APIs can operate without exposing prompts.
 The compatibility scheduler is request-level static batching, not continuous batching.
 The control plane separates global worker placement from bounded worker-local batch
 formation. Routing policies cover round-robin, least queue depth, model residency, memory
-pressure, and estimated completion time with deterministic explanations.
+pressure, and estimated completion time with deterministic explanations. A separate
+topology-aware group policy uses conservative worker inventory and link costs to choose a
+set of workers for future distributed execution; it does not itself run a collective.
 
 ## Workers, models, and resources
 
@@ -97,7 +99,8 @@ failure rules are reusable. They should evolve rather than be replaced.
 
 The remaining gaps include whole-request calls in the static scheduler, physical rather than
 logical KV paging, arbitrary-length decode batches, non-preemptible individual forward
-passes, duplicated request lifecycle types, and process-local coordination. Exact-prefix
-reuse, staged worker health, rich inventory, local atomic placement reservations, and OTLP
-export are implemented, while partial-prefix page sharing, NCCL, topology-aware placement,
-Triton, and CUDA Graphs are not.
+passes, duplicated request lifecycle types, and process-local coordination. Radix
+longest-prefix reuse, staged worker health, rich topology inventory, topology-aware group
+selection, local atomic placement reservations, OTLP export, and deterministic qualification
+drills are implemented. Physical prefix-page sharing, NCCL execution, Triton kernels, CUDA
+Graphs, and real-GPU qualification evidence are not.

@@ -32,7 +32,7 @@ calls.
 
 This remains a modular monolith. The non-streaming compatibility route retains the proven
 static scheduler; streaming uses continuous iteration scheduling, batched prefill/decode,
-exact-prefix snapshot reuse, logical KV block admission, and non-paged Hugging Face
+radix longest-prefix snapshot reuse, logical KV block admission, and non-paged Hugging Face
 `DynamicCache` tensors. Device calls
 use one dedicated executor thread and never hold
 application locks across awaits. When `PLATFORM_API_ENABLED=true`, `/v1/platform/generate` executes the

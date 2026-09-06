@@ -74,6 +74,10 @@ def worker_state_to_dict(worker: WorkerState) -> dict[str, Any]:
         "heartbeat_sequence": worker.heartbeat_sequence,
         "consecutive_failures": worker.consecutive_failures,
         "last_error_code": worker.last_error_code,
+        "node_id": worker.node_id,
+        "numa_node": worker.numa_node,
+        "pcie_root_id": worker.pcie_root_id,
+        "fabric_id": worker.fabric_id,
     }
 
 
@@ -102,6 +106,10 @@ def worker_state_from_dict(payload: dict[str, Any]) -> WorkerState:
         heartbeat_sequence=int(payload.get("heartbeat_sequence", 0)),
         consecutive_failures=int(payload.get("consecutive_failures", 0)),
         last_error_code=payload.get("last_error_code"),
+        node_id=payload.get("node_id"),
+        numa_node=payload.get("numa_node"),
+        pcie_root_id=payload.get("pcie_root_id"),
+        fabric_id=payload.get("fabric_id"),
     )
 
 
@@ -181,6 +189,9 @@ def capacity_to_dict(capacity: RuntimeCapacity) -> dict[str, Any]:
         "compute_capability": capacity.compute_capability,
         "driver_version": capacity.driver_version,
         "runtime_version": capacity.runtime_version,
+        "numa_node": capacity.numa_node,
+        "pcie_root_id": capacity.pcie_root_id,
+        "fabric_id": capacity.fabric_id,
     }
 
 
@@ -196,6 +207,9 @@ def capacity_from_dict(payload: dict[str, Any]) -> RuntimeCapacity:
         payload.get("compute_capability"),
         payload.get("driver_version"),
         payload.get("runtime_version"),
+        payload.get("numa_node"),
+        payload.get("pcie_root_id"),
+        payload.get("fabric_id"),
     )
 
 

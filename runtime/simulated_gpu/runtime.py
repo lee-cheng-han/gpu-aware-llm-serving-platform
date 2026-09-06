@@ -181,4 +181,7 @@ class SimulatedGpuRuntime:
             "simulated",
             "simulated",
             "deterministic-v1",
+            None,
+            None,
+            "simulated-local-fabric",
         )

@@ -288,21 +288,39 @@ class TokenGenerationEngine:
                 runtime.state.phase = SequencePhase.PREFILL
                 runtime.backend_created = True
                 restore = getattr(self.backend, "restore_prefix", None)
-                cached = (
-                    self.prefix_cache.get(runtime.tokenized.token_ids)
+                resume = getattr(self.backend, "resume_prefix", None)
+                match = (
+                    self.prefix_cache.longest_prefix(
+                        runtime.tokenized.token_ids,
+                        exact_only=not callable(resume),
+                    )
                     if callable(restore)
                     else None
                 )
-                if cached is not None:
+                if match is not None:
                     started = time.perf_counter()
-                    token = await self.executor.run_async(
-                        restore,
-                        request_id,
-                        cached,
-                        runtime.state.sampling,
-                    )
+                    if match.exact:
+                        token = await self.executor.run_async(
+                            restore,
+                            request_id,
+                            match.backend_state,
+                            runtime.state.sampling,
+                        )
+                    else:
+                        suffix = TokenizedPrompt(
+                            runtime.tokenized.token_ids[match.matched_tokens :]
+                        )
+                        token = await self.executor.run_async(
+                            resume,
+                            request_id,
+                            match.backend_state,
+                            suffix,
+                            runtime.state.sampling,
+                        )
                     runtime.state.prefill_ms += (time.perf_counter() - started) * 1000
                     runtime.cache_tokens = token.cache_tokens
+                    if not match.exact:
+                        await self._store_prefix(runtime)
                     await self._accept_token(runtime, token, await self._get_eos_ids())
                     continue
                 batch.append(runtime)

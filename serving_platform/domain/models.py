@@ -173,6 +173,10 @@ class WorkerState:
     heartbeat_sequence: int = 0
     consecutive_failures: int = 0
     last_error_code: str | None = None
+    node_id: str | None = None
+    numa_node: int | None = None
+    pcie_root_id: str | None = None
+    fabric_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.worker_id:
@@ -196,6 +200,8 @@ class WorkerState:
             raise ValueError("worker health counters must be non-negative")
         if self.gpu_index is not None and self.gpu_index < 0:
             raise ValueError("GPU index must be non-negative")
+        if self.numa_node is not None and self.numa_node < 0:
+            raise ValueError("NUMA node must be non-negative")
 
 
 @dataclass

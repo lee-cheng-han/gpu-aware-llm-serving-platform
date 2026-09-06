@@ -142,3 +142,6 @@ async def test_metrics_include_token_scheduler_and_kv_accounting(settings):
     assert payload["token_scheduler"]["max_observed_batch_size"] == 2
     assert payload["kv_cache"]["kv_blocks_total"] == 16
     assert payload["kv_cache"]["kv_cache_utilization"] == 0
+    assert payload["prefix_cache"]["exact_hits"] == 0
+    assert payload["prefix_cache"]["partial_hits"] == 0
+    assert payload["prefix_cache"]["matched_tokens"] == 0

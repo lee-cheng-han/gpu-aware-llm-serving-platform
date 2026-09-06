@@ -107,6 +107,46 @@ def test_smollm_prefix_snapshot_restores_identical_greedy_state():
         executor.shutdown()
 
 
+def test_smollm_partial_prefix_resume_matches_full_prefill():
+    worker = InferenceWorker(
+        "HuggingFaceTB/SmolLM2-135M-Instruct",
+        "12fd25f77366fa6b3b4b768ec3050bf629380bac",
+        "cpu",
+        "float32",
+    )
+    backend = HuggingFaceTokenBackend(worker)
+    executor = BackendExecutor("model-partial-prefix-integration")
+    parameters = SamplingParameters(2, temperature=0)
+    try:
+        full = executor.run(
+            backend.tokenize,
+            "Explain why cached prefixes reduce repeated prompt work.",
+        )
+        split = max(1, len(full.token_ids) // 2)
+        prefix = TokenizedPrompt(full.token_ids[:split])
+        suffix = TokenizedPrompt(full.token_ids[split:])
+        executor.run(backend.prefill, "prefix", prefix, parameters)
+        snapshot = executor.run(backend.snapshot_prefix, "prefix")
+        resumed = executor.run(
+            backend.resume_prefix,
+            "resumed",
+            snapshot,
+            suffix,
+            parameters,
+        )
+        reference = executor.run(backend.prefill, "reference", full, parameters)
+        assert resumed.token_id == reference.token_id
+        assert resumed.cache_tokens == reference.cache_tokens == len(full.token_ids)
+        resumed_next = executor.run(backend.decode, "resumed", parameters, 1)
+        reference_next = executor.run(backend.decode, "reference", parameters, 1)
+        assert resumed_next.token_id == reference_next.token_id
+    finally:
+        for sequence_id in ("prefix", "resumed", "reference"):
+            executor.run(backend.release_sequence, sequence_id)
+        executor.run(backend.shutdown)
+        executor.shutdown()
+
+
 def test_smollm_real_batched_decode_and_chunked_prefill_match_reference():
     model_id = "HuggingFaceTB/SmolLM2-135M-Instruct"
     revision = "12fd25f77366fa6b3b4b768ec3050bf629380bac"

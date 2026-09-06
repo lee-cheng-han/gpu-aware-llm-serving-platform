@@ -21,10 +21,11 @@ batches combine only equal physical `DynamicCache` lengths. New requests still j
 continuous scheduler, but arbitrary-length sequences cannot share one model call until a
 paged-attention backend is implemented.
 
-After a successful prefill, an enabled exact-prefix cache can retain an immutable backend
-snapshot. A matching tokenized prompt restores an independent sequence and skips its
-prefill forward pass. This remains exact matching over cloned `DynamicCache` tensors, not
-partial-prefix matching or shared physical pages. See [prefix cache](prefix-cache.md).
+After a successful prefill, an enabled radix prefix cache can retain an immutable backend
+snapshot. A later request restores its longest cached token prefix into an independent
+sequence. An exact match skips prefill; a partial match prefills only its unmatched suffix.
+This remains cloned `DynamicCache` reuse, not shared physical pages or paged attention. See
+[prefix cache](prefix-cache.md).
 
 Cancellation and deadlines are checked between every iteration and before token delivery.
 An in-flight forward pass finishes, after which the affected sequence emits nothing further,

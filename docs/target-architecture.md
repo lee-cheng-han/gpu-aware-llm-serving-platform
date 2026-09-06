@@ -48,18 +48,39 @@ project's planned paged/block allocator.
 - Seeded randomized invariant, exhaustion, reuse, fragmentation, and cancellation tests
 
 This allocator is real scheduler state, but Hugging Face still owns the physical
-`DynamicCache` tensors. Physical paged tensor storage and a paged-attention kernel are in
-progress and are not claimed as implemented.
+`DynamicCache` tensors. Physical paged tensor storage and a paged-attention kernel are
+planned and are not claimed as implemented.
 
-## Implemented: bounded exact-prefix reuse
+## Implemented: bounded radix prefix reuse
 
-- Immutable post-prefill backend snapshots keyed by exact prompt token IDs
-- Independent restored sequence state with request-specific sampling
+- Immutable post-prefill backend snapshots indexed by prompt token IDs
+- Longest-prefix lookup with exact-hit and partial-hit accounting
+- Independent restored sequence state and real suffix-only prefill for partial matches
 - Entry-count and token-count bounds with deterministic LRU eviction
 - JSON and Prometheus cache hit, miss, occupancy, and eviction metrics
 
-This avoids repeated prefill forward passes for exact prompt matches. It is not radix-tree
-longest-prefix matching or physical page sharing; see [prefix cache](prefix-cache.md).
+This avoids repeated prefix work for exact and partially matching prompts. Snapshots still
+clone framework caches; this is not physical page sharing or copy-on-write paging. See
+[prefix cache](prefix-cache.md).
+
+## Implemented: conservative topology-aware grouping
+
+- Worker inventory fields for node, device, NUMA node, PCIe root, and fabric identity
+- Deterministic discovery of CUDA-peer, shared-PCIe-root, host, fabric, and network links
+- Weighted shortest-path group scoring with worker-load tie breaking
+- Explicit unknown-topology rejection and no unmeasured NVLink or bandwidth claims
+
+This is a placement/control-plane capability. Multi-GPU execution and NCCL collectives are
+still planned.
+
+## Implemented: bounded local qualification harness
+
+- Seeded allocator churn with invariant checks and complete release verification
+- Prefix-cache bound checks, overload rejection, and admission reservation cleanup
+- Deterministic injected runtime failure followed by a successful recovery call
+- A configurable Python heap-growth gate and machine-readable JSON result
+
+The harness is local deterministic evidence, not a GPU soak test or production certification.
 
 ## Implemented: local observability foundations
 
@@ -96,16 +117,15 @@ before multiple independent control-plane replicas can place concurrently.
 - Record the machine-readable hardware, driver, CUDA, runtime, workload, and result report
 
 CUDA support is implemented but remains explicitly unverified until this report passes on
-owned or free GPU hardware.
+owned or free GPU hardware. This validation is a gate within the three remaining
+hardware phases below, rather than a separate implementation phase.
 
 ## Planned in dependency order
 
 1. Physical paged KV tensors, arbitrary-length decode batches, and paged attention
-2. Radix-tree partial-prefix sharing and measured TTFT comparison
-3. Multi-GPU execution with `torch.distributed`/NCCL and correctness comparisons
-4. Topology discovery and topology-aware worker-group placement
-5. Profile-guided Triton kernel and CUDA Graph experiments with eager fallbacks
-6. Sustained memory-leak, crash, overload, and production-qualification evidence
+2. Multi-GPU execution with `torch.distributed`/NCCL and correctness comparisons
+3. Profile-guided Triton kernel and CUDA Graph experiments with eager fallbacks
 
 No planned item is represented as an existing capability in public documentation. GPU and
-multi-GPU performance numbers will appear only after recorded runs on identified hardware.
+multi-GPU performance numbers, plus real-device soak and crash evidence, will appear only
+after recorded runs on identified hardware.
