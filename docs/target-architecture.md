@@ -47,9 +47,20 @@ project's planned paged/block allocator.
 - High/low watermark hysteresis, allocation-failure handling, byte estimates, and metrics
 - Seeded randomized invariant, exhaustion, reuse, fragmentation, and cancellation tests
 
-This allocator is real scheduler state, but Hugging Face still owns the physical
-`DynamicCache` tensors. Physical paged tensor storage and a paged-attention kernel are
-planned and are not claimed as implemented.
+This allocator is real scheduler state, but Hugging Face still owns the default serving
+path's `DynamicCache` tensors. The independent physical page pool below is not yet wired into
+that model path.
+
+## In progress: physical paged KV and attention
+
+- Real PyTorch K/V page tensors indexed through scheduler-compatible block tables
+- Capacity-checked multi-layer append and deterministic release
+- Different-length block-table gather with masks and reference scaled-dot-product attention
+- Strict CUDA-gated device, allocation, and layout report
+
+The physical store and reference attention are implemented independently, but the default
+Hugging Face model path still uses `DynamicCache`. Direct model integration, token parity,
+and a no-copy page-consuming kernel remain before end-to-end PagedAttention is implemented.
 
 ## Implemented: bounded radix prefix reuse
 
@@ -70,8 +81,18 @@ clone framework caches; this is not physical page sharing or copy-on-write pagin
 - Weighted shortest-path group scoring with worker-load tie breaking
 - Explicit unknown-topology rejection and no unmeasured NVLink or bandwidth claims
 
-This is a placement/control-plane capability. Multi-GPU execution and NCCL collectives are
-still planned.
+This is a placement/control-plane capability. Model-parallel execution across the selected
+group is still planned.
+
+## In progress: distributed execution
+
+- Validated `torchrun` rank, rendezvous, backend, and timeout configuration
+- Strict NCCL initialization with explicit device selection and no CPU fallback
+- All-reduce, broadcast, object-gather, barrier, lifecycle, and status boundaries
+- Deterministic uneven tensor-shard planning and a real two-process validation command
+
+Model weight sharding, tensor-parallel forward passes, and recorded multi-GPU correctness
+evidence remain pending.
 
 ## Implemented: bounded local qualification harness
 
@@ -122,8 +143,8 @@ hardware phases below, rather than a separate implementation phase.
 
 ## Planned in dependency order
 
-1. Physical paged KV tensors, arbitrary-length decode batches, and paged attention
-2. Multi-GPU execution with `torch.distributed`/NCCL and correctness comparisons
+1. Integrate physical pages directly into model attention and prove token parity
+2. Shard model execution across the NCCL worker group and record correctness comparisons
 3. Profile-guided Triton kernel and CUDA Graph experiments with eager fallbacks
 
 No planned item is represented as an existing capability in public documentation. GPU and

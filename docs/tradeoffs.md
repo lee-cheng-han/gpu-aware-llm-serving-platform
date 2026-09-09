@@ -3,17 +3,20 @@
 ## Why this is not mini-vLLM
 
 This project studies a much smaller problem. It is not a replacement for vLLM, TGI, or
-Triton. It does not implement PagedAttention, GPU KV tensor paging, tensor parallelism, or
-production-scale distributed serving.
+Triton. It does not implement end-to-end PagedAttention, tensor parallelism, or
+production-scale distributed serving. Physical page storage and NCCL lifecycle boundaries
+exist independently but are not connected to the default model path.
 
-## Why no PagedAttention
+## Why PagedAttention is not yet end to end
 
 PagedAttention solves GPU KV-cache allocation and fragmentation. The non-streaming path uses
 whole Hugging Face `generate()` calls. Streaming now uses real prefill/decode with the
 framework's `DynamicCache`, which exposes token boundaries without claiming a custom
 allocator. A fixed-block scheduler allocator now provides capacity, ownership, reference
-counts, and pressure behavior. The physical tensors remain framework-managed, so the block
-tables must not be described as a PagedAttention implementation.
+counts, and pressure behavior. A separate physical page pool proves block-table storage and
+reference attention, but the default model's physical tensors remain framework-managed.
+Until the model consumes those pages directly, this must not be described as end-to-end
+PagedAttention.
 
 ## Why CPU-only local model
 
@@ -39,12 +42,12 @@ infrastructure. The platform layer provides a Redis-compatible request metadata 
 restart persistence, but deliberately leaves client construction and Redis deployment to
 the operator. Prompts and outputs are excluded by default to limit sensitive-data exposure.
 
-## Why no full API authentication or per-user rate limits
+## Why authentication remains development-oriented
 
-v1 has a single trusted caller: the local benchmark script. Full API-key authentication,
-per-user rate limits, and token-per-minute budgets are intentionally scoped out. v1 keeps
-queue size, concurrency, prompt length, and output length limits because those directly
-protect the local scheduler during benchmarks.
+Optional bearer API-key authentication maps callers to tenants, and tenant admission limits
+concurrency, queueing, and reserved tokens. It is suitable for local experiments, not an
+internet-facing identity system: there is no token rotation, OAuth/OIDC integration, secret
+manager, or durable audit log.
 
 ## Why timeout starts at queue entry
 

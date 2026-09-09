@@ -25,9 +25,9 @@
 - Streaming has a true iteration scheduler with dynamically changing waiting/running sets.
   Real decode batches currently contain only equal-length physical caches; different-length
   sequences share scheduler iterations but require separate model calls.
-- The KV block allocator enforces logical capacity and ownership, but it does not store the
-  model's physical key/value tensors. There is no PagedAttention, custom tensor paging, or
-  tensor parallelism yet.
+- A separate PyTorch page pool stores physical key/value tensors and runs reference attention
+  over gathered block tables. The default model backend still uses `DynamicCache`, so there
+  is no end-to-end PagedAttention, fused page kernel, or fragmentation improvement claim.
 - An active PyTorch forward pass cannot be interrupted immediately. Cancellation prevents
   subsequent decode and emission, then waits for the active operation before cache cleanup.
 - Metrics, queues, prefix snapshots, placement reservations, and request outcomes are
@@ -39,8 +39,9 @@
 - Prefix caching uses longest token-prefix matches, bypasses exact prefill work, and performs
   real suffix-only prefill for partial matches. It is bounded by LRU entry/token limits and
   clones `DynamicCache` state rather than sharing physical pages.
-- Topology discovery uses explicit inventory and conservative categorical costs. It does not
-  infer NVLink, measure bandwidth, launch NCCL collectives, or make the gateway multi-GPU.
+- Topology discovery uses explicit inventory and conservative categorical costs. A strict
+  distributed wrapper can launch NCCL collectives under `torchrun`, but no model weights are
+  sharded and the gateway is not yet multi-GPU. No unmeasured NVLink or bandwidth is inferred.
 - The local qualification harness checks deterministic allocator, cache, overload, recovery,
   and Python-heap conditions. It is not a substitute for sustained real-GPU soak testing.
 - Deployment is single-host and single-replica.

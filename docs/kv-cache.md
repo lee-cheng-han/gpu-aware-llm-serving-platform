@@ -18,7 +18,8 @@ used, and free blocks; estimated bytes; utilization; allocation failures; and pr
 `KV_CACHE_BYTES_PER_BLOCK=737280` is the pinned SmolLM2 float32 estimate for 16 tokens. Other
 models or dtypes must configure their measured/calculated value.
 
-This is real admission and ownership accounting, not physical paged tensor storage. The
-Hugging Face backend still uses per-sequence `DynamicCache` tensors. A later backend must map
-these block tables to physical key/value pages and implement attention over them before the
-project can claim PagedAttention or reduced tensor fragmentation.
+This allocator remains admission and ownership accounting. `TorchPagedKVCache` now maps the
+same block-table concept to physical key/value pages and provides a correctness-first gather
+and attention path. The Hugging Face backend still uses per-sequence `DynamicCache` tensors;
+it must consume the physical pages directly before the project can claim end-to-end
+PagedAttention or reduced tensor fragmentation.

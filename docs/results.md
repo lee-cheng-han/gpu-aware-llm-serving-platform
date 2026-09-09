@@ -51,6 +51,16 @@ checks, overload/release validation, and deterministic failure/recovery checks. 
 measures Python allocations only. Results from this command are local correctness evidence,
 not GPU performance or production certification.
 
+## Hardware-path foundation status
+
+Download-free tests validate page-layout configuration, distributed rank validation,
+deterministic uneven shard boundaries, strict NCCL no-fallback behavior through a fake
+runtime, collective lifecycle, and owned shutdown. The physical PyTorch page/gather/attention
+tests were collected but skipped on this lightweight environment because PyTorch is absent.
+The CUDA page test and real multi-process NCCL runner are implemented but have not run here
+because no CUDA devices are exposed. No paged-attention or multi-GPU performance result is
+claimed.
+
 The versioned deterministic baseline is available at
 [`benchmark/results/simulated/heterogeneous/report.md`](../benchmark/results/simulated/heterogeneous/report.md).
 It is a control-plane regression fixture, not a GPU-aware platform measurement.

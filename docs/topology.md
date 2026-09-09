@@ -11,5 +11,6 @@ shortest-path cost plus a configurable queue/load term. Stable worker-ID orderin
 deterministic, and workers absent from the graph are rejected with `topology_missing`.
 
 The graph deliberately does not label a connection as NVLink or attach a bandwidth unless
-that fact was measured or explicitly supplied. This component selects groups only; it does
-not initialize `torch.distributed`, execute NCCL collectives, or provide tensor parallelism.
+that fact was measured or explicitly supplied. This component selects groups only. The
+separate distributed runtime can initialize NCCL collectives, but model tensor parallelism
+and the connection between group selection and process launch remain pending.

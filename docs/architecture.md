@@ -62,8 +62,12 @@ serving_platform/       (`platform` would shadow Python's standard-library modul
 
 runtime/
   base/                model runtime contract and result types
+  distributed/         strict process-group lifecycle and collective boundary
   huggingface/         CPU/CUDA adapter around the existing worker
   simulated_gpu/       deterministic, explicitly simulated device runtime
+
+inference/
+  paged_kv.py          physical PyTorch page pool and reference attention path
 ```
 
 Interfaces point inward toward framework-independent domain types. FastAPI and Pydantic

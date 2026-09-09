@@ -44,9 +44,9 @@ Model definitions already carry revision, runtime, dtype support, context, and b
 Some cache and routing paths still key by model ID; revision/dtype-complete cache identity is
 tracked as remaining production work rather than hidden behind documentation.
 
-## Dynamic batching is not continuous batching
+## Static batching and continuous token scheduling coexist
 
 The non-streaming path forms short-window batches and runs whole Hugging Face `generate()`
-calls. The streaming path has explicit token boundaries but executes one sequence at a time;
-it does not admit or remove members of an active batch and therefore is not continuous
-batching. It does not implement PagedAttention or a custom KV-cache manager.
+calls. The streaming path continuously admits and removes sequences and batches compatible
+real prefill/decode operations. Different physical cache lengths still require separate
+model calls until the new page store is integrated directly into model attention.

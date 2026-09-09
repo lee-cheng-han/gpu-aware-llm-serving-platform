@@ -1,4 +1,4 @@
-.PHONY: install install-dev install-observability run test test-model test-gpu test-otel lint typecheck evaluation evaluation-token-policies qualification docker-build docker-build-cuda docker-run deploy-kind benchmark-sanity benchmark-token-loop benchmark-no-batching benchmark-dynamic-batch benchmark-sustained-load
+.PHONY: install install-dev install-observability run test test-model test-gpu test-paged-kv-gpu test-distributed-gpu test-otel lint typecheck evaluation evaluation-token-policies qualification docker-build docker-build-cuda docker-run deploy-kind benchmark-sanity benchmark-token-loop benchmark-no-batching benchmark-dynamic-batch benchmark-sustained-load
 install:
 	python -m pip install -r requirements.txt
 install-dev:
@@ -13,6 +13,10 @@ test-model:
 	RUN_MODEL_TESTS=1 pytest -m model -q
 test-gpu:
 	RUN_MODEL_TESTS=1 RUN_GPU_TESTS=1 pytest -m gpu -q
+test-paged-kv-gpu:
+	RUN_GPU_TESTS=1 pytest -q tests/test_gpu_paged_kv.py
+test-distributed-gpu:
+	torchrun --standalone --nproc-per-node=2 -m benchmark.run_distributed_validation --check
 test-otel:
 	RUN_OTEL_TESTS=1 pytest -m otel -q
 lint:

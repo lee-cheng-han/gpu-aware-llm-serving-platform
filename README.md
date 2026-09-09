@@ -20,6 +20,7 @@ prefill and autoregressive decode against framework-managed KV caches.
   real-model prefill/decode batches
 - Fixed-block KV capacity reservation, ownership tables, reference counts, watermarks, and
   exhaustion handling
+- Experimental physical PyTorch K/V pages with block-table gather and reference attention
 - Bounded radix KV snapshot lookup with LRU eviction, exact bypass, and suffix-only prefill
 - Prefill-first, decode-first, balanced, and optional real chunked-prefill execution
 - Model-aware context-window validation and optional startup warm-up
@@ -36,6 +37,7 @@ prefill and autoregressive decode against framework-managed KV caches.
 - Residency-aware, memory-safe, and estimated-completion placement policies
 - Atomic local placement reservations and demand-aware replica decisions
 - Conservative topology discovery and topology-aware multi-worker group selection
+- Strict `torch.distributed`/NCCL lifecycle and collective validation foundation
 - Coalesced model loading, warmup, memory reservations, and protected LRU idle eviction
 - API-key tenant identity, atomic quotas, weighted fairness, priority aging, and cancellation
 - Supervised stale-worker recovery with bounded, reason-coded retries for unstarted work
@@ -51,11 +53,12 @@ prefill and autoregressive decode against framework-managed KV caches.
 - The default gateway execution path is not yet distributed or production-scale; simulated
   GPU results are never real-device measurements
 - The block allocator governs admission and ownership, but physical model tensors still use
-  Hugging Face `DynamicCache`; this is not a custom paged-attention kernel
+  Hugging Face `DynamicCache` on the default serving path; the separate physical page pool
+  is not yet an end-to-end custom paged-attention kernel
 
 This project is not a replacement for vLLM, TGI, or Triton. It does not implement
-PagedAttention, GPU KV tensor paging, tensor parallelism, or production-scale distributed
-serving. The streaming path continuously schedules multiple sequences but only combines
+end-to-end PagedAttention, tensor parallelism, or production-scale distributed serving.
+The streaming path continuously schedules multiple sequences but only combines
 decode work with compatible physical cache lengths until a paged-attention backend exists.
 
 ## Architecture
@@ -72,6 +75,8 @@ compatibility worker's execution lock. See the [current architecture](docs/curre
 [backend ADR](docs/adr/001-huggingface-prefill-decode.md).
 Topology grouping and the local evidence gates are detailed in
 [topology-aware placement](docs/topology.md) and [qualification](docs/qualification.md).
+The hardware-path foundations are documented in [paged attention](docs/paged-attention.md)
+and the [distributed runtime](docs/distributed-runtime.md).
 
 ## Quick Start
 
@@ -352,8 +357,8 @@ streaming, CPU-only, and single-worker semantics.
 ## Future Work
 
 The remaining production work includes shared cross-controller placement transactions,
-real GPU evaluation, physical paged KV tensors/PagedAttention, arbitrary-length decode
-batching, physical prefix-page sharing, multi-GPU/NCCL execution, and profile-guided
+real GPU evaluation, model-integrated paged attention, arbitrary-length decode batching,
+physical prefix-page sharing, tensor-parallel model execution over NCCL, and profile-guided
 Triton/CUDA Graph experiments.
 
 ## Development Checks
@@ -378,3 +383,13 @@ The manual GitHub Actions workflow runs Python 3.12 tests, Ruff, mypy, compilati
 evaluation gates, dependency checks, and a non-pushing Docker build. It does not run on
 pushes or pull requests, preventing automatic hosted-runner consumption. The same checks
 can be run locally without a paid inference API.
+
+Optional hardware validation remains local and explicit:
+
+```bash
+make test-paged-kv-gpu
+make test-distributed-gpu
+```
+
+These commands require user-provided CUDA hardware and never provision a cloud instance or
+call a paid service.

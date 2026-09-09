@@ -8,11 +8,13 @@ scheduling evaluation. Phase 1 retains those components and adds the token engin
 below; model tests remain opt-in because they download weights.
 
 The latest completed download-free baseline passes Ruff, mypy across its configured source
-files, 191 tests with one environment-dependent skip, compilation, and both deterministic
+files, 197 tests with four environment-dependent skips, compilation, and both deterministic
 evaluation gates. A separate optional integration test exported a real protobuf span to a
 temporary local OTLP/HTTP collector. Five pinned/compatibility model tests were recorded in the earlier CPU
 proof; the newly added prefix-restore model test remains opt-in and has not been recorded on
-this host. CUDA validation remains pending because this host exposes no usable CUDA device.
+this host. The three physical-page tensor tests are also skipped because this lightweight
+development environment does not have PyTorch installed. CUDA and NCCL validation remain
+pending because this host exposes no usable CUDA device.
 
 ## Executable paths
 
@@ -58,6 +60,11 @@ and failure propagation. Runtime adapters support local Hugging Face CPU/CUDA ex
 an explicitly synthetic deterministic GPU model. CUDA capacity comes from PyTorch APIs and
 never silently falls back to CPU.
 
+Two hardware-path foundations remain outside the default request path. A physical PyTorch
+page pool stores K/V tensors and executes reference attention after block-table gathers. A
+strict distributed context manages `torchrun` configuration and NCCL collectives. Neither is
+yet connected to model weight sharding, so the executable gateway remains single-device.
+
 The control plane can hold in-process workers or authenticated `HttpWorkerClient` handles.
 The local HTTP contract covers registration, heartbeat, health, capacity, model lifecycle,
 request handoff, batch execution, cancellation, drain, and shutdown. A process integration
@@ -102,5 +109,6 @@ logical KV paging, arbitrary-length decode batches, non-preemptible individual f
 passes, duplicated request lifecycle types, and process-local coordination. Radix
 longest-prefix reuse, staged worker health, rich topology inventory, topology-aware group
 selection, local atomic placement reservations, OTLP export, and deterministic qualification
-drills are implemented. Physical prefix-page sharing, NCCL execution, Triton kernels, CUDA
+drills are implemented. Physical page storage and NCCL lifecycle foundations are in
+progress; model-integrated paged attention, tensor-parallel execution, Triton kernels, CUDA
 Graphs, and real-GPU qualification evidence are not.
